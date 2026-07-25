@@ -8,7 +8,7 @@ const PORT = process.env.PORT || 3000;
 // 🔧 SET YOUR VERSION HERE (check Aternos panel)
 const SERVER_VERSION = '1.21';   // <-- CHANGE to your actual version (e.g., '1.20.2', '1.21')
 
-const uniqueName = `ABDOU_BOT_${Date.now().toString().slice(-6)}`;
+const uniqueName = `ABDOU_hOT_${Date.now().toString().slice(-6)}`;
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
