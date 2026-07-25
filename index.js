@@ -5,12 +5,12 @@ const net = require('net');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ─── BOT CONFIG ──────────────────────────────────────────
+// ─── CONFIG ──────────────────────────────────────────────
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: 'ABDOU_BOT_2024',
-  version: false,               // auto-detect – let mineflayer figure it out
+  username: 'ABDOU-BOT',           // as requested
+  version: false,                  // auto-detect latest version
   auth: 'offline'
 };
 
@@ -22,21 +22,21 @@ let logMessages = [];
 let afkInterval = null;
 let reconnectAttempts = 0;
 let lastActivity = Date.now();
-let isReconnecting = false;     // prevent overlapping reconnects
 let reconnectTimer = null;
+let isReconnecting = false;
 const MAX_LOG = 100;
 
-function addLog(message, type = 'info') {
-  const entry = { time: new Date().toISOString(), message, type };
+function addLog(msg, type = 'info') {
+  const entry = { time: new Date().toISOString(), message: msg, type };
   logMessages.push(entry);
   if (logMessages.length > MAX_LOG) logMessages.shift();
-  console.log(`[${type}] ${message}`);
+  console.log(`[${type}] ${msg}`);
 }
 
-// ─── CHECK SERVER ──────────────────────────────────────────
+// ─── SERVER REACHABILITY CHECK ──────────────────────────
 function checkServer(callback) {
   const socket = new net.Socket();
-  let timeout = setTimeout(() => {
+  const timeout = setTimeout(() => {
     socket.destroy();
     callback(false);
   }, 3000);
@@ -74,14 +74,21 @@ function startAntiAFK() {
         lastActivity = Date.now();
         addLog(`🔄 Anti-AFK action`, 'info');
       }
-    } catch (_) {}
+      // Small random head movements more often
+      if (idleTime > 10 && Math.random() < 0.1) {
+        bot.look(
+          bot.entity?.yaw + (Math.random() - 0.5) * 0.5,
+          bot.entity?.pitch + (Math.random() - 0.5) * 0.2,
+          true
+        );
+      }
+    } catch (_) { /* ignore */ }
   }, 5000);
   addLog('🛡️ Anti-AFK activated', 'success');
 }
 
-// ─── BOT CREATION (with safe reconnect) ──────────────────
+// ─── BOT CREATION ────────────────────────────────────────
 function createBot() {
-  // Prevent multiple simultaneous reconnect attempts
   if (isReconnecting) return;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -98,12 +105,10 @@ function createBot() {
 
   checkServer((online) => {
     if (!online) {
-      addLog(`❌ Server is OFFLINE`, 'error');
+      addLog(`❌ Server is OFFLINE – start it on Aternos`, 'error');
       lastError = 'Aternos server not running. Start it and set to Cracked.';
       botReady = false;
       isReconnecting = false;
-
-      // Retry after 15 seconds
       reconnectTimer = setTimeout(() => createBot(), 15000);
       return;
     }
@@ -123,7 +128,7 @@ function createBot() {
     lastError = null;
     isReconnecting = false;
 
-    // ─── EVENT HANDLERS ──────────────────────────────
+    // ─── EVENT HANDLERS ──────────────────────────────────
 
     bot.on('login', () => {
       botUsername = bot.username;
@@ -133,8 +138,8 @@ function createBot() {
     bot.on('spawn', () => {
       botReady = true;
       addLog('✅ SPAWNED – BOT IS ONLINE', 'success');
+      // No chat message on join (as requested)
       startAntiAFK();
-      try { bot.chat('Hello! I am ABDOU_BOT_2024 – staying online!'); } catch(e) {}
       lastActivity = Date.now();
       reconnectAttempts = 0; // reset on successful spawn
     });
@@ -143,11 +148,7 @@ function createBot() {
       lastError = err.message;
       botReady = false;
       addLog(`❌ Error: ${err.message}`, 'error');
-      // If it's a version error, we might want to try auto again
-      if (err.message.includes('version')) {
-        addLog(`💡 Version mismatch – switching to auto-detection (already enabled)`, 'warn');
-      }
-      // Do NOT reconnect here – let 'end' handle it
+      // Do not reconnect immediately – let 'end' handle it
     });
 
     bot.on('end', (reason) => {
@@ -160,7 +161,7 @@ function createBot() {
         afkInterval = null;
       }
 
-      // Schedule reconnect with a fixed delay (no rapid loops)
+      // Schedule reconnect with backoff
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectAttempts++;
       const delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
@@ -178,7 +179,6 @@ function createBot() {
         afkInterval = null;
       }
 
-      // Same reconnect delay
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectAttempts++;
       const delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
@@ -189,22 +189,213 @@ function createBot() {
     bot.on('connect', () => {
       addLog('🔌 TCP connected', 'info');
     });
+
+    // Update activity on any message
+    bot.on('message', () => { lastActivity = Date.now(); });
   });
 }
 
-// ─── START BOT ──────────────────────────────────────────
+// ─── START THE BOT ──────────────────────────────────────
 addLog(`🚀 Starting ABDOU-BOT...`, 'info');
 createBot();
 
-// ─── EXPRESS SERVER ──────────────────────────────────────
+// ─── EXPRESS WEB SERVER ──────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Dashboard (same as before – but I'll keep it minimal for length)
-// ... (full dashboard code) ...
-// For brevity, I'll include the same HTML/JS as previous, but you can copy the full dashboard from earlier.
+// ─── DASHBOARD HTML ──────────────────────────────────────
+app.get('/', (req, res) => {
+  res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ABDOU-BOT Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+    .container { max-width: 950px; margin: 0 auto; }
+    h1 { color: #58a6ff; border-bottom: 2px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; }
+    .status-item { background: #0d1117; padding: 12px; border-radius: 6px; text-align: center; }
+    .status-item .label { font-size: 0.75rem; color: #8b949e; }
+    .status-item .value { font-size: 1.3rem; font-weight: bold; }
+    .online { color: #2ea043; }
+    .offline { color: #f85149; }
+    .connecting { color: #d29922; }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0; }
+    .controls input { flex: 1; min-width: 180px; padding: 10px 14px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 1rem; }
+    .controls input:focus { outline: none; border-color: #58a6ff; }
+    .btn { padding: 10px 18px; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; transition: 0.15s; color: #fff; }
+    .btn-primary { background: #238636; }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-danger { background: #da3633; }
+    .btn-danger:hover { background: #f85149; }
+    .btn-warning { background: #d29922; }
+    .btn-warning:hover { background: #e3b341; }
+    .btn-secondary { background: #30363d; }
+    .btn-secondary:hover { background: #484f58; }
+    .log-area { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 10px; max-height: 320px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 0.8rem; white-space: pre-wrap; word-break: break-all; }
+    .log-entry { padding: 2px 0; border-bottom: 1px solid #161b22; }
+    .log-time { color: #8b949e; margin-right: 8px; }
+    .log-info { color: #58a6ff; }
+    .log-success { color: #2ea043; }
+    .log-error { color: #f85149; }
+    .log-warn { color: #d29922; }
+    .footer { margin-top: 20px; text-align: center; color: #8b949e; font-size: 0.8rem; }
+    .highlight { background: #1f6feb33; padding: 10px; border-radius: 6px; border-left: 3px solid #1f6feb; margin: 10px 0; }
+    .badge-green { background: #2ea04333; color: #2ea043; padding: 2px 12px; border-radius: 12px; font-size: 0.8rem; }
+    .badge-red { background: #f8514933; color: #f85149; padding: 2px 12px; border-radius: 12px; font-size: 0.8rem; }
+    .memory-bar { width: 100%; height: 6px; background: #30363d; border-radius: 3px; margin-top: 6px; }
+    .memory-bar-fill { height: 100%; background: #58a6ff; border-radius: 3px; transition: width 0.3s; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>⛏️ ABDOU-BOT Dashboard <span class="badge-green">🛡️ Anti-AFK</span></h1>
 
-// ─── API ROUTES ──────────────────────────────────────────
+  <div class="highlight">
+    💡 Server: <strong>Power69.aternos.me:42959</strong> &nbsp;|&nbsp; Version: <strong>auto‑detect</strong> &nbsp;|&nbsp; Mode: <strong>Cracked</strong>
+  </div>
+
+  <div class="card">
+    <div class="status-grid" id="statusGrid">
+      <div class="status-item"><div class="label">Status</div><div class="value" id="statusText">⏳ Loading...</div></div>
+      <div class="status-item"><div class="label">Bot Name</div><div class="value" id="username">-</div></div>
+      <div class="status-item"><div class="label">Server</div><div class="value" style="font-size:1rem;">Power69.aternos.me:42959</div></div>
+      <div class="status-item"><div class="label">Version</div><div class="value" style="font-size:1rem;" id="version">Auto</div></div>
+      <div class="status-item"><div class="label">Uptime</div><div class="value" id="uptime">0s</div></div>
+      <div class="status-item"><div class="label">Reconnects</div><div class="value" id="reconnectAttempts">0</div></div>
+      <div class="status-item"><div class="label">Memory</div><div class="value" id="memory">0 MB</div></div>
+      <div class="status-item"><div class="label">Anti-AFK</div><div class="value" style="font-size:1.2rem;" id="afkStatus">🟢 Active</div></div>
+    </div>
+    <div class="memory-bar"><div class="memory-bar-fill" id="memBar" style="width:0%"></div></div>
+    <div id="lastError" style="margin-top:10px;color:#f85149;"></div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <input type="text" id="cmdInput" placeholder="Type a command or message..." />
+      <button class="btn btn-primary" onclick="sendCommand()">Send</button>
+      <button class="btn btn-secondary" onclick="sendCommand('/list')">/list</button>
+      <button class="btn btn-secondary" onclick="sendCommand('/seed')">/seed</button>
+      <button class="btn btn-secondary" onclick="sendCommand('/whereami')">/whereami</button>
+      <button class="btn btn-warning" onclick="reconnectBot()">🔄 Reconnect</button>
+      <button class="btn btn-danger" onclick="clearLogs()">🗑️ Clear Logs</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:10px;">📜 Live Logs</h3>
+    <div class="log-area" id="logArea"></div>
+  </div>
+
+  <div class="footer">
+    ABDOU-BOT • Auto‑version • Anti‑AFK • Smart reconnect • No data scraping • Minimal memory
+  </div>
+</div>
+
+<script>
+  function addLogMessage(entry) {
+    const logArea = document.getElementById('logArea');
+    const div = document.createElement('div');
+    div.className = 'log-entry';
+    const time = new Date(entry.time).toLocaleTimeString();
+    div.innerHTML = '<span class="log-time">[' + time + ']</span><span class="log-' + entry.type + '">' + entry.message + '</span>';
+    logArea.appendChild(div);
+    logArea.scrollTop = logArea.scrollHeight;
+    if (logArea.children.length > 200) logArea.removeChild(logArea.firstChild);
+  }
+
+  function fetchStatus() {
+    fetch('/status')
+      .then(r => r.json())
+      .then(data => {
+        const statusEl = document.getElementById('statusText');
+        if (data.status === 'online') {
+          statusEl.textContent = '✅ Online';
+          statusEl.className = 'value online';
+        } else if (data.status === 'connecting') {
+          statusEl.textContent = '⏳ Connecting...';
+          statusEl.className = 'value connecting';
+        } else {
+          statusEl.textContent = '❌ Offline';
+          statusEl.className = 'value offline';
+        }
+        document.getElementById('username').textContent = data.username || '-';
+        document.getElementById('uptime').textContent = data.uptime + 's';
+        document.getElementById('memory').textContent = data.memoryMB + ' MB';
+        document.getElementById('memBar').style.width = Math.min(data.memoryPercent, 100) + '%';
+        document.getElementById('version').textContent = data.version || 'Auto';
+        document.getElementById('reconnectAttempts').textContent = data.reconnectAttempts || 0;
+        const afkEl = document.getElementById('afkStatus');
+        if (data.afkActive) {
+          afkEl.textContent = '🟢 Active';
+          afkEl.style.color = '#2ea043';
+        } else {
+          afkEl.textContent = '🔴 Inactive';
+          afkEl.style.color = '#f85149';
+        }
+        if (data.lastError) {
+          document.getElementById('lastError').textContent = '⚠️ ' + data.lastError;
+        } else {
+          document.getElementById('lastError').textContent = '';
+        }
+      })
+      .catch(() => {});
+  }
+
+  function fetchLogs() {
+    fetch('/logs')
+      .then(r => r.json())
+      .then(logs => {
+        const logArea = document.getElementById('logArea');
+        if (logArea.children.length === logs.length) return;
+        logArea.innerHTML = '';
+        logs.forEach(addLogMessage);
+      })
+      .catch(() => {});
+  }
+
+  function sendCommand() {
+    const input = document.getElementById('cmdInput');
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    fetch('/command?cmd=' + encodeURIComponent(cmd))
+      .then(() => { input.value = ''; })
+      .catch(() => {});
+  }
+
+  function reconnectBot() {
+    fetch('/reconnect', { method: 'POST' })
+      .then(() => {})
+      .catch(() => {});
+  }
+
+  function clearLogs() {
+    fetch('/clear-logs', { method: 'POST' })
+      .then(() => { document.getElementById('logArea').innerHTML = ''; })
+      .catch(() => {});
+  }
+
+  document.getElementById('cmdInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendCommand();
+  });
+
+  setInterval(fetchStatus, 2000);
+  setInterval(fetchLogs, 3000);
+  fetchStatus();
+  fetchLogs();
+</script>
+</body>
+</html>
+  `);
+});
+
+// ─── API ENDPOINTS ──────────────────────────────────────
+
 app.get('/status', (req, res) => {
   const mem = process.memoryUsage();
   const memMB = Math.round(mem.heapUsed / 1024 / 1024);
@@ -212,7 +403,7 @@ app.get('/status', (req, res) => {
   const uptime = botReady ? Math.floor((Date.now() - (bot._client?.connectedTime || Date.now())) / 1000) : 0;
   res.json({
     status: botReady ? 'online' : (bot ? 'connecting' : 'offline'),
-    username: botUsername || 'ABDOU_BOT_2024',
+    username: botUsername || 'ABDOU-BOT',
     uptime: uptime,
     memoryMB: memMB,
     memoryPercent: memPercent,
@@ -266,7 +457,7 @@ app.get('/command', (req, res) => {
 
 // ─── START SERVER ──────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`🌐 Dashboard on port ${PORT}`);
-  console.log(`🤖 Bot for Power69.aternos.me:42959 (auto-version)`);
-  console.log(`🛡️ Anti-AFK enabled – will stay online.`);
+  console.log(`🌐 Dashboard running on port ${PORT}`);
+  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ABDOU-BOT (auto-version)`);
+  console.log(`🛡️ Anti-AFK enabled – bot will stay online silently.`);
 });
