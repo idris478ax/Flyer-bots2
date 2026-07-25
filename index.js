@@ -6,13 +6,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CONFIG ──────────────────────────────────────────────
-// Add a random suffix to avoid name conflicts
-const randomSuffix = Math.floor(Math.random() * 10000);
+// Use a timestamp to ensure uniqueness
+const uniqueName = `ABDOU_BOT_${Date.now().toString().slice(-6)}`;
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: `ABDOU-BOT-${randomSuffix}`,   // always unique
-  version: false,                         // auto-detect
+  username: uniqueName,
+  version: false,               // auto-detect – you can manually set e.g. '1.20.4'
   auth: 'offline'
 };
 
@@ -83,14 +83,25 @@ function startAntiAFK() {
   addLog('🛡️ Anti-AFK activated', 'success');
 }
 
-// ─── SAFELY EXTRACT KICK REASON ──────────────────────────
+// ─── ULTIMATE KICK REASON PARSER ──────────────────────────
 function getKickReason(reason) {
   if (!reason) return 'Unknown reason';
   if (typeof reason === 'string') return reason;
   if (reason.text) return reason.text;
   if (reason.message) return reason.message;
-  if (reason.toString) return reason.toString();
-  return JSON.stringify(reason);
+  if (reason.reason) return reason.reason;
+  if (reason.extra) {
+    // Some kick messages are arrays of text components
+    if (Array.isArray(reason.extra)) {
+      return reason.extra.map(part => part.text || '').join('');
+    }
+  }
+  // Fallback: try to JSON stringify
+  try {
+    return JSON.stringify(reason);
+  } catch {
+    return String(reason);
+  }
 }
 
 function createBot() {
@@ -167,22 +178,31 @@ function createBot() {
       reconnectTimer = setTimeout(() => createBot(), delay);
     });
 
+    // ─── THE FIXED KICK HANDLER ───────────────────────────────────
     bot.on('kicked', (reason, loggedIn) => {
       botReady = false;
+      // Parse the kick reason
       const kickMsg = getKickReason(reason);
       lastError = `Kicked: ${kickMsg}`;
       addLog(`👢 KICKED: ${kickMsg}`, 'error');
+
+      // Also log the raw object to console for debugging (will appear in Render logs)
+      console.log('Raw kick reason:', JSON.stringify(reason, null, 2));
 
       if (afkInterval) {
         clearInterval(afkInterval);
         afkInterval = null;
       }
 
-      // If the kick is due to a permanent issue, wait longer before retrying
-      let delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
-      if (kickMsg.includes('whitelist') || kickMsg.includes('banned') || kickMsg.includes('invalid')) {
-        delay = 30000; // wait 30 seconds for permanent issues
-        addLog(`⚠️ Permanent issue detected – waiting longer (${delay/1000}s)`, 'warn');
+      // Determine reconnect delay based on kick message
+      let delay = 15000; // default
+      const lower = kickMsg.toLowerCase();
+      if (lower.includes('whitelist') || lower.includes('banned') || 
+          lower.includes('invalid') || lower.includes('protocol')) {
+        delay = 60000; // wait 1 minute for permanent issues
+        addLog(`⚠️ Permanent issue detected – waiting ${delay/1000}s`, 'warn');
+      } else if (lower.includes('full') || lower.includes('throttled')) {
+        delay = 30000;
       }
 
       if (reconnectTimer) clearTimeout(reconnectTimer);
