@@ -1,20 +1,19 @@
 const express = require('express');
 const mineflayer = require('mineflayer');
-const net = require('net');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CONFIG ──────────────────────────────────────────────
 // 🔧 SET YOUR VERSION HERE (check Aternos panel)
-const SERVER_VERSION = '26.2';   // <-- CHANGE to your actual version
+const SERVER_VERSION = '1.20.4';   // <-- CHANGE to your actual version (e.g., '1.20.2', '1.21')
 
 const uniqueName = `ABDOU_BOT_${Date.now().toString().slice(-6)}`;
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: uniqueName,
-  version: SERVER_VERSION,      // explicitly set, no auto-detect
+  version: SERVER_VERSION,
   auth: 'offline'
 };
 
@@ -27,7 +26,6 @@ let afkInterval = null;
 let reconnectAttempts = 0;
 let lastActivity = Date.now();
 let reconnectTimer = null;
-let isReconnecting = false;
 const MAX_LOG = 100;
 
 function addLog(msg, type = 'info') {
@@ -37,28 +35,9 @@ function addLog(msg, type = 'info') {
   console.log(`[${type}] ${msg}`);
 }
 
-function checkServer(callback) {
-  const socket = new net.Socket();
-  const timeout = setTimeout(() => {
-    socket.destroy();
-    callback(false);
-  }, 3000);
-  socket.on('connect', () => {
-    clearTimeout(timeout);
-    socket.destroy();
-    callback(true);
-  });
-  socket.on('error', () => {
-    clearTimeout(timeout);
-    callback(false);
-  });
-  socket.connect(BOT_CONFIG.port, BOT_CONFIG.host);
-}
-
-// ─── SAFE ANTI‑AFK (starts only after bot is fully ready) ──
+// ─── SAFE ANTI‑AFK (delayed) ────────────────────────────
 function startAntiAFK() {
   if (afkInterval) clearInterval(afkInterval);
-  // Wait 10 seconds after spawn before starting movements
   setTimeout(() => {
     if (!botReady || !bot) return;
     afkInterval = setInterval(() => {
@@ -86,7 +65,7 @@ function startAntiAFK() {
         }
       } catch (_) { /* ignore */ }
     }, 5000);
-    addLog('🛡️ Anti-AFK activated (delayed start)', 'success');
+    addLog('🛡️ Anti-AFK activated (delayed 10s)', 'success');
   }, 10000);
 }
 
@@ -94,30 +73,24 @@ function startAntiAFK() {
 function getKickReason(reason) {
   if (!reason) return 'Unknown reason';
   if (typeof reason === 'string') return reason;
-  // Recursively extract text from complex objects
-  function extractText(obj) {
+  function extract(obj) {
     if (!obj) return '';
     if (typeof obj === 'string') return obj;
-    if (obj.text) return extractText(obj.text);
-    if (obj.value) return extractText(obj.value);
+    if (obj.text) return extract(obj.text);
+    if (obj.value) return extract(obj.value);
     if (obj.extra) {
-      if (Array.isArray(obj.extra)) {
-        return obj.extra.map(extractText).join('');
-      } else {
-        return extractText(obj.extra);
-      }
+      if (Array.isArray(obj.extra)) return obj.extra.map(extract).join('');
+      else return extract(obj.extra);
     }
-    if (Array.isArray(obj)) {
-      return obj.map(extractText).join('');
-    }
+    if (Array.isArray(obj)) return obj.map(extract).join('');
     return '';
   }
-  const msg = extractText(reason);
+  const msg = extract(reason);
   return msg || JSON.stringify(reason);
 }
 
+// ─── BOT CREATION (no ping check) ────────────────────────
 function createBot() {
-  if (isReconnecting) return;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -127,108 +100,88 @@ function createBot() {
     bot = null;
   }
 
-  isReconnecting = true;
-  addLog(`🔍 Checking server...`, 'info');
+  addLog(`🔄 Connecting to ${BOT_CONFIG.host}:${BOT_CONFIG.port} as ${BOT_CONFIG.username} (${SERVER_VERSION})`, 'info');
+  try {
+    bot = mineflayer.createBot(BOT_CONFIG);
+  } catch(err) {
+    addLog(`❌ Bot creation error: ${err.message}`, 'error');
+    lastError = err.message;
+    reconnectTimer = setTimeout(() => createBot(), 10000);
+    return;
+  }
 
-  checkServer((online) => {
-    if (!online) {
-      addLog(`❌ Server is OFFLINE – start it on Aternos`, 'error');
-      lastError = 'Aternos server not running. Start it and set to Cracked.';
-      botReady = false;
-      isReconnecting = false;
-      reconnectTimer = setTimeout(() => createBot(), 15000);
-      return;
-    }
+  botReady = false;
+  lastError = null;
 
-    addLog(`✅ Server online – connecting as ${BOT_CONFIG.username} (version ${BOT_CONFIG.version})`, 'success');
-    try {
-      bot = mineflayer.createBot(BOT_CONFIG);
-    } catch(err) {
-      addLog(`❌ Bot creation error: ${err.message}`, 'error');
-      lastError = err.message;
-      isReconnecting = false;
-      reconnectTimer = setTimeout(() => createBot(), 10000);
-      return;
-    }
-
-    botReady = false;
-    lastError = null;
-    isReconnecting = false;
-
-    bot.on('login', () => {
-      botUsername = bot.username;
-      addLog(`✅ Logged in as ${bot.username}`, 'success');
-    });
-
-    bot.on('spawn', () => {
-      botReady = true;
-      addLog('✅ SPAWNED – BOT IS ONLINE', 'success');
-      // Start anti-AFK with delay
-      startAntiAFK();
-      lastActivity = Date.now();
-      reconnectAttempts = 0;
-    });
-
-    bot.on('error', (err) => {
-      lastError = err.message;
-      botReady = false;
-      addLog(`❌ Error: ${err.message}`, 'error');
-    });
-
-    bot.on('end', (reason) => {
-      botReady = false;
-      const msg = reason || 'Disconnected';
-      lastError = `Ended: ${msg}`;
-      addLog(`⚠️ Connection ended: ${msg}`, 'warn');
-      if (afkInterval) {
-        clearInterval(afkInterval);
-        afkInterval = null;
-      }
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectAttempts++;
-      const delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
-      addLog(`🔄 Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})`, 'info');
-      reconnectTimer = setTimeout(() => createBot(), delay);
-    });
-
-    bot.on('kicked', (reason, loggedIn) => {
-      botReady = false;
-      const kickMsg = getKickReason(reason);
-      lastError = `Kicked: ${kickMsg}`;
-      addLog(`👢 KICKED: ${kickMsg}`, 'error');
-      console.log('Raw kick reason:', JSON.stringify(reason, null, 2));
-
-      if (afkInterval) {
-        clearInterval(afkInterval);
-        afkInterval = null;
-      }
-
-      let delay = 15000;
-      const lower = kickMsg.toLowerCase();
-      if (lower.includes('whitelist') || lower.includes('banned') || 
-          lower.includes('invalid') || lower.includes('protocol') || 
-          lower.includes('move')) {
-        delay = 60000; // wait 1 minute for version/movement issues
-        addLog(`⚠️ Version or movement issue – waiting ${delay/1000}s`, 'warn');
-      } else if (lower.includes('full') || lower.includes('throttled')) {
-        delay = 30000;
-      }
-
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectAttempts++;
-      addLog(`🔄 Reconnecting after kick in ${delay/1000}s (attempt ${reconnectAttempts})`, 'info');
-      reconnectTimer = setTimeout(() => createBot(), delay);
-    });
-
-    bot.on('connect', () => {
-      addLog('🔌 TCP connected', 'info');
-    });
-
-    bot.on('message', () => { lastActivity = Date.now(); });
+  bot.on('login', () => {
+    botUsername = bot.username;
+    addLog(`✅ Logged in as ${bot.username}`, 'success');
   });
+
+  bot.on('spawn', () => {
+    botReady = true;
+    addLog('✅ SPAWNED – BOT IS ONLINE', 'success');
+    startAntiAFK();
+    lastActivity = Date.now();
+    reconnectAttempts = 0;
+  });
+
+  bot.on('error', (err) => {
+    lastError = err.message;
+    botReady = false;
+    addLog(`❌ Error: ${err.message}`, 'error');
+    // Don't reconnect here – let 'end' or 'kicked' handle it
+  });
+
+  bot.on('end', (reason) => {
+    botReady = false;
+    const msg = reason || 'Disconnected';
+    lastError = `Ended: ${msg}`;
+    addLog(`⚠️ Connection ended: ${msg}`, 'warn');
+    if (afkInterval) {
+      clearInterval(afkInterval);
+      afkInterval = null;
+    }
+    scheduleReconnect();
+  });
+
+  bot.on('kicked', (reason, loggedIn) => {
+    botReady = false;
+    const kickMsg = getKickReason(reason);
+    lastError = `Kicked: ${kickMsg}`;
+    addLog(`👢 KICKED: ${kickMsg}`, 'error');
+    console.log('Raw kick:', JSON.stringify(reason, null, 2));
+    if (afkInterval) {
+      clearInterval(afkInterval);
+      afkInterval = null;
+    }
+    scheduleReconnect(kickMsg);
+  });
+
+  bot.on('connect', () => {
+    addLog('🔌 TCP connected', 'info');
+  });
+
+  bot.on('message', () => { lastActivity = Date.now(); });
 }
 
-addLog(`🚀 Starting ABDOU-BOT with unique name: ${BOT_CONFIG.username}`, 'info');
+function scheduleReconnect(kickMsg) {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectAttempts++;
+  let delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
+  if (kickMsg && (
+    kickMsg.toLowerCase().includes('whitelist') ||
+    kickMsg.toLowerCase().includes('banned') ||
+    kickMsg.toLowerCase().includes('invalid') ||
+    kickMsg.toLowerCase().includes('move')
+  )) {
+    delay = 60000; // longer wait for permanent issues
+  }
+  addLog(`🔄 Reconnecting in ${delay/1000}s (attempt ${reconnectAttempts})`, 'info');
+  reconnectTimer = setTimeout(() => createBot(), delay);
+}
+
+addLog(`🚀 Starting ABDOU-BOT with name: ${BOT_CONFIG.username}`, 'info');
 createBot();
 
 // ─── EXPRESS WEB SERVER ──────────────────────────────────
@@ -278,7 +231,6 @@ app.get('/', (req, res) => {
     .footer { margin-top: 20px; text-align: center; color: #8b949e; font-size: 0.8rem; }
     .highlight { background: #1f6feb33; padding: 10px; border-radius: 6px; border-left: 3px solid #1f6feb; margin: 10px 0; }
     .badge-green { background: #2ea04333; color: #2ea043; padding: 2px 12px; border-radius: 12px; font-size: 0.8rem; }
-    .badge-red { background: #f8514933; color: #f85149; padding: 2px 12px; border-radius: 12px; font-size: 0.8rem; }
     .memory-bar { width: 100%; height: 6px; background: #30363d; border-radius: 3px; margin-top: 6px; }
     .memory-bar-fill { height: 100%; background: #58a6ff; border-radius: 3px; transition: width 0.3s; }
   </style>
@@ -478,6 +430,6 @@ app.get('/command', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🌐 Dashboard running on port ${PORT}`);
-  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ${BOT_CONFIG.username} (version ${SERVER_VERSION})`);
+  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ${BOT_CONFIG.username} (${SERVER_VERSION})`);
   console.log(`🛡️ Anti-AFK will start 10 seconds after spawn.`);
 });
