@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 
 // ─── CONFIG ──────────────────────────────────────────────
 // 🔧 SET YOUR VERSION HERE (check Aternos panel)
-const SERVER_VERSION = '1.20.4';   // <-- CHANGE to your actual version
+const SERVER_VERSION = '26.2';   // <-- CHANGE to your actual version
 
 const uniqueName = `ABDOU_BOT_${Date.now().toString().slice(-6)}`;
 const BOT_CONFIG = {
