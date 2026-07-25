@@ -6,13 +6,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CONFIG ──────────────────────────────────────────────
-// Use a timestamp to ensure uniqueness
+// 🔧 SET YOUR VERSION HERE (check Aternos panel)
+const SERVER_VERSION = '1.20.4';   // <-- CHANGE to your actual version
+
 const uniqueName = `ABDOU_BOT_${Date.now().toString().slice(-6)}`;
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: uniqueName,
-  version: false,               // auto-detect – you can manually set e.g. '1.20.4'
+  version: SERVER_VERSION,      // explicitly set, no auto-detect
   auth: 'offline'
 };
 
@@ -53,55 +55,65 @@ function checkServer(callback) {
   socket.connect(BOT_CONFIG.port, BOT_CONFIG.host);
 }
 
+// ─── SAFE ANTI‑AFK (starts only after bot is fully ready) ──
 function startAntiAFK() {
   if (afkInterval) clearInterval(afkInterval);
-  afkInterval = setInterval(() => {
+  // Wait 10 seconds after spawn before starting movements
+  setTimeout(() => {
     if (!botReady || !bot) return;
-    try {
-      const idleTime = (Date.now() - lastActivity) / 1000;
-      if (idleTime > 30) {
-        const actions = [
-          () => { bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), 500); },
-          () => { bot.setControlState('sneak', true); setTimeout(() => bot.setControlState('sneak', false), 1000); },
-          () => { bot.look(Math.random() * Math.PI * 2, 0, true); },
-          () => { bot.setControlState('forward', true); setTimeout(() => bot.setControlState('forward', false), 500); },
-          () => { bot.setControlState('back', true); setTimeout(() => bot.setControlState('back', false), 500); }
-        ];
-        actions[Math.floor(Math.random() * actions.length)]();
-        lastActivity = Date.now();
-        addLog(`🔄 Anti-AFK action`, 'info');
-      }
-      if (idleTime > 10 && Math.random() < 0.1) {
-        bot.look(
-          bot.entity?.yaw + (Math.random() - 0.5) * 0.5,
-          bot.entity?.pitch + (Math.random() - 0.5) * 0.2,
-          true
-        );
-      }
-    } catch (_) { /* ignore */ }
-  }, 5000);
-  addLog('🛡️ Anti-AFK activated', 'success');
+    afkInterval = setInterval(() => {
+      if (!botReady || !bot) return;
+      try {
+        const idleTime = (Date.now() - lastActivity) / 1000;
+        if (idleTime > 30) {
+          const actions = [
+            () => { bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), 500); },
+            () => { bot.setControlState('sneak', true); setTimeout(() => bot.setControlState('sneak', false), 1000); },
+            () => { bot.look(Math.random() * Math.PI * 2, 0, true); },
+            () => { bot.setControlState('forward', true); setTimeout(() => bot.setControlState('forward', false), 500); },
+            () => { bot.setControlState('back', true); setTimeout(() => bot.setControlState('back', false), 500); }
+          ];
+          actions[Math.floor(Math.random() * actions.length)]();
+          lastActivity = Date.now();
+          addLog(`🔄 Anti-AFK action`, 'info');
+        }
+        if (idleTime > 10 && Math.random() < 0.1) {
+          bot.look(
+            bot.entity?.yaw + (Math.random() - 0.5) * 0.5,
+            bot.entity?.pitch + (Math.random() - 0.5) * 0.2,
+            true
+          );
+        }
+      } catch (_) { /* ignore */ }
+    }, 5000);
+    addLog('🛡️ Anti-AFK activated (delayed start)', 'success');
+  }, 10000);
 }
 
 // ─── ULTIMATE KICK REASON PARSER ──────────────────────────
 function getKickReason(reason) {
   if (!reason) return 'Unknown reason';
   if (typeof reason === 'string') return reason;
-  if (reason.text) return reason.text;
-  if (reason.message) return reason.message;
-  if (reason.reason) return reason.reason;
-  if (reason.extra) {
-    // Some kick messages are arrays of text components
-    if (Array.isArray(reason.extra)) {
-      return reason.extra.map(part => part.text || '').join('');
+  // Recursively extract text from complex objects
+  function extractText(obj) {
+    if (!obj) return '';
+    if (typeof obj === 'string') return obj;
+    if (obj.text) return extractText(obj.text);
+    if (obj.value) return extractText(obj.value);
+    if (obj.extra) {
+      if (Array.isArray(obj.extra)) {
+        return obj.extra.map(extractText).join('');
+      } else {
+        return extractText(obj.extra);
+      }
     }
+    if (Array.isArray(obj)) {
+      return obj.map(extractText).join('');
+    }
+    return '';
   }
-  // Fallback: try to JSON stringify
-  try {
-    return JSON.stringify(reason);
-  } catch {
-    return String(reason);
-  }
+  const msg = extractText(reason);
+  return msg || JSON.stringify(reason);
 }
 
 function createBot() {
@@ -128,7 +140,7 @@ function createBot() {
       return;
     }
 
-    addLog(`✅ Server online – connecting as ${BOT_CONFIG.username} (auto-version)`, 'success');
+    addLog(`✅ Server online – connecting as ${BOT_CONFIG.username} (version ${BOT_CONFIG.version})`, 'success');
     try {
       bot = mineflayer.createBot(BOT_CONFIG);
     } catch(err) {
@@ -151,6 +163,7 @@ function createBot() {
     bot.on('spawn', () => {
       botReady = true;
       addLog('✅ SPAWNED – BOT IS ONLINE', 'success');
+      // Start anti-AFK with delay
       startAntiAFK();
       lastActivity = Date.now();
       reconnectAttempts = 0;
@@ -178,15 +191,11 @@ function createBot() {
       reconnectTimer = setTimeout(() => createBot(), delay);
     });
 
-    // ─── THE FIXED KICK HANDLER ───────────────────────────────────
     bot.on('kicked', (reason, loggedIn) => {
       botReady = false;
-      // Parse the kick reason
       const kickMsg = getKickReason(reason);
       lastError = `Kicked: ${kickMsg}`;
       addLog(`👢 KICKED: ${kickMsg}`, 'error');
-
-      // Also log the raw object to console for debugging (will appear in Render logs)
       console.log('Raw kick reason:', JSON.stringify(reason, null, 2));
 
       if (afkInterval) {
@@ -194,13 +203,13 @@ function createBot() {
         afkInterval = null;
       }
 
-      // Determine reconnect delay based on kick message
-      let delay = 15000; // default
+      let delay = 15000;
       const lower = kickMsg.toLowerCase();
       if (lower.includes('whitelist') || lower.includes('banned') || 
-          lower.includes('invalid') || lower.includes('protocol')) {
-        delay = 60000; // wait 1 minute for permanent issues
-        addLog(`⚠️ Permanent issue detected – waiting ${delay/1000}s`, 'warn');
+          lower.includes('invalid') || lower.includes('protocol') || 
+          lower.includes('move')) {
+        delay = 60000; // wait 1 minute for version/movement issues
+        addLog(`⚠️ Version or movement issue – waiting ${delay/1000}s`, 'warn');
       } else if (lower.includes('full') || lower.includes('throttled')) {
         delay = 30000;
       }
@@ -278,18 +287,18 @@ app.get('/', (req, res) => {
 <div class="container">
   <h1>⛏️ ABDOU-BOT Dashboard <span class="badge-green">🛡️ Anti-AFK</span></h1>
   <div class="highlight">
-    💡 Server: <strong>Power69.aternos.me:42959</strong> &nbsp;|&nbsp; Version: <strong>auto‑detect</strong> &nbsp;|&nbsp; Mode: <strong>Cracked</strong>
+    💡 Server: <strong>Power69.aternos.me:42959</strong> &nbsp;|&nbsp; Version: <strong>${SERVER_VERSION}</strong> &nbsp;|&nbsp; Mode: <strong>Cracked</strong>
   </div>
   <div class="card">
     <div class="status-grid" id="statusGrid">
       <div class="status-item"><div class="label">Status</div><div class="value" id="statusText">⏳ Loading...</div></div>
       <div class="status-item"><div class="label">Bot Name</div><div class="value" id="username">-</div></div>
       <div class="status-item"><div class="label">Server</div><div class="value" style="font-size:1rem;">Power69.aternos.me:42959</div></div>
-      <div class="status-item"><div class="label">Version</div><div class="value" style="font-size:1rem;" id="version">Auto</div></div>
+      <div class="status-item"><div class="label">Version</div><div class="value" style="font-size:1rem;" id="version">${SERVER_VERSION}</div></div>
       <div class="status-item"><div class="label">Uptime</div><div class="value" id="uptime">0s</div></div>
       <div class="status-item"><div class="label">Reconnects</div><div class="value" id="reconnectAttempts">0</div></div>
       <div class="status-item"><div class="label">Memory</div><div class="value" id="memory">0 MB</div></div>
-      <div class="status-item"><div class="label">Anti-AFK</div><div class="value" style="font-size:1.2rem;" id="afkStatus">🟢 Active</div></div>
+      <div class="status-item"><div class="label">Anti-AFK</div><div class="value" style="font-size:1.2rem;" id="afkStatus">⏳ Waiting...</div></div>
     </div>
     <div class="memory-bar"><div class="memory-bar-fill" id="memBar" style="width:0%"></div></div>
     <div id="lastError" style="margin-top:10px;color:#f85149;font-weight:bold;"></div>
@@ -310,7 +319,7 @@ app.get('/', (req, res) => {
     <div class="log-area" id="logArea"></div>
   </div>
   <div class="footer">
-    ABDOU-BOT • Auto‑version • Anti‑AFK • Smart reconnect • No data scraping • Minimal memory
+    ABDOU-BOT • Version: ${SERVER_VERSION} • Anti‑AFK (delayed) • Smart reconnect
   </div>
 </div>
 <script>
@@ -344,15 +353,15 @@ app.get('/', (req, res) => {
         document.getElementById('uptime').textContent = data.uptime + 's';
         document.getElementById('memory').textContent = data.memoryMB + ' MB';
         document.getElementById('memBar').style.width = Math.min(data.memoryPercent, 100) + '%';
-        document.getElementById('version').textContent = data.version || 'Auto';
+        document.getElementById('version').textContent = data.version || '${SERVER_VERSION}';
         document.getElementById('reconnectAttempts').textContent = data.reconnectAttempts || 0;
         const afkEl = document.getElementById('afkStatus');
         if (data.afkActive) {
           afkEl.textContent = '🟢 Active';
           afkEl.style.color = '#2ea043';
         } else {
-          afkEl.textContent = '🔴 Inactive';
-          afkEl.style.color = '#f85149';
+          afkEl.textContent = '⏳ Waiting...';
+          afkEl.style.color = '#d29922';
         }
         document.getElementById('lastError').textContent = data.lastError || '';
       })
@@ -419,7 +428,7 @@ app.get('/status', (req, res) => {
     uptime: uptime,
     memoryMB: memMB,
     memoryPercent: memPercent,
-    version: bot?.version || 'auto',
+    version: bot?.version || SERVER_VERSION,
     lastError: lastError,
     reconnectAttempts: reconnectAttempts,
     afkActive: afkInterval !== null && botReady
@@ -469,6 +478,6 @@ app.get('/command', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`🌐 Dashboard running on port ${PORT}`);
-  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ${BOT_CONFIG.username} (auto-version)`);
-  console.log(`🛡️ Anti-AFK enabled – bot will stay online silently.`);
+  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ${BOT_CONFIG.username} (version ${SERVER_VERSION})`);
+  console.log(`🛡️ Anti-AFK will start 10 seconds after spawn.`);
 });
