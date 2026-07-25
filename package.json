@@ -1,7 +1,7 @@
 {
   "name": "abdou-bot",
   "version": "1.0.0",
-  "description": "ABDOU-BOT for Aternos (Render.com)",
+  "description": "ABDOU-BOT with auto-version and anti-AFK",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
