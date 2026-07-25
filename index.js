@@ -6,11 +6,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── CONFIG ──────────────────────────────────────────────
+// Add a random suffix to avoid name conflicts
+const randomSuffix = Math.floor(Math.random() * 10000);
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: 'ABDOU-BOT',           // as requested
-  version: false,                  // auto-detect latest version
+  username: `ABDOU-BOT-${randomSuffix}`,   // always unique
+  version: false,                         // auto-detect
   auth: 'offline'
 };
 
@@ -33,29 +35,24 @@ function addLog(msg, type = 'info') {
   console.log(`[${type}] ${msg}`);
 }
 
-// ─── SERVER REACHABILITY CHECK ──────────────────────────
 function checkServer(callback) {
   const socket = new net.Socket();
   const timeout = setTimeout(() => {
     socket.destroy();
     callback(false);
   }, 3000);
-
   socket.on('connect', () => {
     clearTimeout(timeout);
     socket.destroy();
     callback(true);
   });
-
   socket.on('error', () => {
     clearTimeout(timeout);
     callback(false);
   });
-
   socket.connect(BOT_CONFIG.port, BOT_CONFIG.host);
 }
 
-// ─── ANTI-AFK ────────────────────────────────────────────
 function startAntiAFK() {
   if (afkInterval) clearInterval(afkInterval);
   afkInterval = setInterval(() => {
@@ -74,7 +71,6 @@ function startAntiAFK() {
         lastActivity = Date.now();
         addLog(`🔄 Anti-AFK action`, 'info');
       }
-      // Small random head movements more often
       if (idleTime > 10 && Math.random() < 0.1) {
         bot.look(
           bot.entity?.yaw + (Math.random() - 0.5) * 0.5,
@@ -87,14 +83,22 @@ function startAntiAFK() {
   addLog('🛡️ Anti-AFK activated', 'success');
 }
 
-// ─── BOT CREATION ────────────────────────────────────────
+// ─── SAFELY EXTRACT KICK REASON ──────────────────────────
+function getKickReason(reason) {
+  if (!reason) return 'Unknown reason';
+  if (typeof reason === 'string') return reason;
+  if (reason.text) return reason.text;
+  if (reason.message) return reason.message;
+  if (reason.toString) return reason.toString();
+  return JSON.stringify(reason);
+}
+
 function createBot() {
   if (isReconnecting) return;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-
   if (bot) {
     try { bot.end(); } catch(e) {}
     bot = null;
@@ -128,8 +132,6 @@ function createBot() {
     lastError = null;
     isReconnecting = false;
 
-    // ─── EVENT HANDLERS ──────────────────────────────────
-
     bot.on('login', () => {
       botUsername = bot.username;
       addLog(`✅ Logged in as ${bot.username}`, 'success');
@@ -138,30 +140,26 @@ function createBot() {
     bot.on('spawn', () => {
       botReady = true;
       addLog('✅ SPAWNED – BOT IS ONLINE', 'success');
-      // No chat message on join (as requested)
       startAntiAFK();
       lastActivity = Date.now();
-      reconnectAttempts = 0; // reset on successful spawn
+      reconnectAttempts = 0;
     });
 
     bot.on('error', (err) => {
       lastError = err.message;
       botReady = false;
       addLog(`❌ Error: ${err.message}`, 'error');
-      // Do not reconnect immediately – let 'end' handle it
     });
 
     bot.on('end', (reason) => {
       botReady = false;
-      lastError = reason || 'Disconnected';
-      addLog(`⚠️ Connection ended: ${reason || 'Unknown'}`, 'warn');
-      
+      const msg = reason || 'Disconnected';
+      lastError = `Ended: ${msg}`;
+      addLog(`⚠️ Connection ended: ${msg}`, 'warn');
       if (afkInterval) {
         clearInterval(afkInterval);
         afkInterval = null;
       }
-
-      // Schedule reconnect with backoff
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectAttempts++;
       const delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
@@ -171,17 +169,24 @@ function createBot() {
 
     bot.on('kicked', (reason, loggedIn) => {
       botReady = false;
-      lastError = reason;
-      addLog(`👢 KICKED: ${reason}`, 'error');
-      
+      const kickMsg = getKickReason(reason);
+      lastError = `Kicked: ${kickMsg}`;
+      addLog(`👢 KICKED: ${kickMsg}`, 'error');
+
       if (afkInterval) {
         clearInterval(afkInterval);
         afkInterval = null;
       }
 
+      // If the kick is due to a permanent issue, wait longer before retrying
+      let delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
+      if (kickMsg.includes('whitelist') || kickMsg.includes('banned') || kickMsg.includes('invalid')) {
+        delay = 30000; // wait 30 seconds for permanent issues
+        addLog(`⚠️ Permanent issue detected – waiting longer (${delay/1000}s)`, 'warn');
+      }
+
       if (reconnectTimer) clearTimeout(reconnectTimer);
       reconnectAttempts++;
-      const delay = Math.min(10000 + (reconnectAttempts * 5000), 60000);
       addLog(`🔄 Reconnecting after kick in ${delay/1000}s (attempt ${reconnectAttempts})`, 'info');
       reconnectTimer = setTimeout(() => createBot(), delay);
     });
@@ -190,20 +195,17 @@ function createBot() {
       addLog('🔌 TCP connected', 'info');
     });
 
-    // Update activity on any message
     bot.on('message', () => { lastActivity = Date.now(); });
   });
 }
 
-// ─── START THE BOT ──────────────────────────────────────
-addLog(`🚀 Starting ABDOU-BOT...`, 'info');
+addLog(`🚀 Starting ABDOU-BOT with unique name: ${BOT_CONFIG.username}`, 'info');
 createBot();
 
 // ─── EXPRESS WEB SERVER ──────────────────────────────────
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ─── DASHBOARD HTML ──────────────────────────────────────
 app.get('/', (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -255,11 +257,9 @@ app.get('/', (req, res) => {
 <body>
 <div class="container">
   <h1>⛏️ ABDOU-BOT Dashboard <span class="badge-green">🛡️ Anti-AFK</span></h1>
-
   <div class="highlight">
     💡 Server: <strong>Power69.aternos.me:42959</strong> &nbsp;|&nbsp; Version: <strong>auto‑detect</strong> &nbsp;|&nbsp; Mode: <strong>Cracked</strong>
   </div>
-
   <div class="card">
     <div class="status-grid" id="statusGrid">
       <div class="status-item"><div class="label">Status</div><div class="value" id="statusText">⏳ Loading...</div></div>
@@ -272,9 +272,8 @@ app.get('/', (req, res) => {
       <div class="status-item"><div class="label">Anti-AFK</div><div class="value" style="font-size:1.2rem;" id="afkStatus">🟢 Active</div></div>
     </div>
     <div class="memory-bar"><div class="memory-bar-fill" id="memBar" style="width:0%"></div></div>
-    <div id="lastError" style="margin-top:10px;color:#f85149;"></div>
+    <div id="lastError" style="margin-top:10px;color:#f85149;font-weight:bold;"></div>
   </div>
-
   <div class="card">
     <div class="controls">
       <input type="text" id="cmdInput" placeholder="Type a command or message..." />
@@ -286,17 +285,14 @@ app.get('/', (req, res) => {
       <button class="btn btn-danger" onclick="clearLogs()">🗑️ Clear Logs</button>
     </div>
   </div>
-
   <div class="card">
     <h3 style="margin-bottom:10px;">📜 Live Logs</h3>
     <div class="log-area" id="logArea"></div>
   </div>
-
   <div class="footer">
     ABDOU-BOT • Auto‑version • Anti‑AFK • Smart reconnect • No data scraping • Minimal memory
   </div>
 </div>
-
 <script>
   function addLogMessage(entry) {
     const logArea = document.getElementById('logArea');
@@ -338,11 +334,7 @@ app.get('/', (req, res) => {
           afkEl.textContent = '🔴 Inactive';
           afkEl.style.color = '#f85149';
         }
-        if (data.lastError) {
-          document.getElementById('lastError').textContent = '⚠️ ' + data.lastError;
-        } else {
-          document.getElementById('lastError').textContent = '';
-        }
+        document.getElementById('lastError').textContent = data.lastError || '';
       })
       .catch(() => {});
   }
@@ -455,9 +447,8 @@ app.get('/command', (req, res) => {
   }
 });
 
-// ─── START SERVER ──────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`🌐 Dashboard running on port ${PORT}`);
-  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ABDOU-BOT (auto-version)`);
+  console.log(`🤖 Bot configured for Power69.aternos.me:42959 as ${BOT_CONFIG.username} (auto-version)`);
   console.log(`🛡️ Anti-AFK enabled – bot will stay online silently.`);
 });
