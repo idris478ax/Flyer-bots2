@@ -1,16 +1,16 @@
 const express = require('express');
 const mineflayer = require('mineflayer');
+const net = require('net');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ─── BOT CONFIG ──────────────────────────────────────────
-// Version set to 'false' = auto-detect (works with ANY server version)
 const BOT_CONFIG = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: 'ABDOU_BOT_2024',          // Changed to avoid name conflicts
-  version: false,                       // AUTO-DETECT - works with 1.20.2, 1.21, etc.
+  username: 'ABDOU_BOT_2024',
+  version: false,  // auto-detect
   auth: 'offline'
 };
 
@@ -19,6 +19,11 @@ let botReady = false;
 let botUsername = BOT_CONFIG.username;
 let lastError = null;
 let logMessages = [];
+let isConnecting = false;
+let afkInterval = null;
+let reconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 999;
+let lastActivity = Date.now();
 const MAX_LOG = 100;
 
 function addLog(message, type = 'info') {
@@ -28,72 +33,202 @@ function addLog(message, type = 'info') {
   console.log(`[${type}] ${message}`);
 }
 
+// ─── CHECK IF SERVER IS ONLINE ──────────────────────────
+function checkServer(callback) {
+  const socket = new net.Socket();
+  let timeout = setTimeout(() => {
+    socket.destroy();
+    callback(false);
+  }, 3000);
+
+  socket.on('connect', () => {
+    clearTimeout(timeout);
+    socket.destroy();
+    callback(true);
+  });
+
+  socket.on('error', () => {
+    clearTimeout(timeout);
+    callback(false);
+  });
+
+  socket.connect(BOT_CONFIG.port, BOT_CONFIG.host);
+}
+
+// ─── ANTI-AFK ────────────────────────────────────────────
+function startAntiAFK() {
+  if (afkInterval) {
+    clearInterval(afkInterval);
+    afkInterval = null;
+  }
+
+  afkInterval = setInterval(() => {
+    if (!botReady || !bot) return;
+
+    try {
+      // Different anti-AFK actions
+      const now = Date.now();
+      const idleTime = (now - lastActivity) / 1000;
+
+      // Every 30 seconds, do something
+      if (idleTime > 30) {
+        // Random action to prevent AFK
+        const actions = [
+          () => { bot.setControlState('jump', true); setTimeout(() => bot.setControlState('jump', false), 500); },
+          () => { bot.setControlState('sneak', true); setTimeout(() => bot.setControlState('sneak', false), 1000); },
+          () => { bot.look(Math.random() * Math.PI * 2, 0, true); },
+          () => { bot.setControlState('forward', true); setTimeout(() => bot.setControlState('forward', false), 500); },
+          () => { bot.setControlState('back', true); setTimeout(() => bot.setControlState('back', false), 500); },
+        ];
+
+        const action = actions[Math.floor(Math.random() * actions.length)];
+        action();
+        lastActivity = now;
+        addLog(`🔄 Anti-AFK: ${action.toString().split('{')[0].trim() || 'moved'}`, 'info');
+      }
+
+      // Small random movements more often
+      if (idleTime > 10 && Math.random() < 0.1) {
+        bot.look(
+          bot.entity?.yaw + (Math.random() - 0.5) * 0.5,
+          bot.entity?.pitch + (Math.random() - 0.5) * 0.2,
+          true
+        );
+      }
+    } catch (e) {
+      // Silently fail to avoid spam
+    }
+  }, 5000); // Check every 5 seconds
+
+  addLog('🛡️ Anti-AFK protection activated', 'success');
+}
+
 // ─── BOT CREATION ──────────────────────────────────────
 function createBot() {
+  if (isConnecting) return;
   if (bot) {
     try { bot.end(); } catch(e) {}
     bot = null;
   }
 
-  addLog(`Connecting to ${BOT_CONFIG.host}:${BOT_CONFIG.port} as ${BOT_CONFIG.username} (auto-version)`, 'info');
-  
-  try {
-    bot = mineflayer.createBot(BOT_CONFIG);
-  } catch(err) {
-    addLog(`Failed to create bot: ${err.message}`, 'error');
-    lastError = err.message;
-    setTimeout(() => createBot(), 10000);
-    return;
-  }
+  isConnecting = true;
+  addLog(`🔍 Checking if server is online...`, 'info');
 
-  botReady = false;
-  lastError = null;
+  checkServer((online) => {
+    isConnecting = false;
+    
+    if (!online) {
+      addLog(`❌ Server ${BOT_CONFIG.host}:${BOT_CONFIG.port} is OFFLINE!`, 'error');
+      lastError = 'Aternos server is not running. Start it in the Aternos panel!';
+      botReady = false;
+      
+      reconnectAttempts++;
+      let delay = Math.min(10000 + (reconnectAttempts * 2000), 60000);
+      addLog(`🔄 Retrying in ${delay/1000}s... (attempt ${reconnectAttempts})`, 'info');
+      
+      setTimeout(() => {
+        createBot();
+      }, delay);
+      return;
+    }
 
-  // ── Critical events ──
-  bot.on('login', () => {
-    botUsername = bot.username;
-    addLog(`✅ Logged in as ${bot.username}`, 'success');
-  });
+    reconnectAttempts = 0;
+    addLog(`✅ Server is online! Connecting as ${BOT_CONFIG.username}...`, 'success');
+    
+    try {
+      bot = mineflayer.createBot(BOT_CONFIG);
+    } catch(err) {
+      addLog(`❌ Failed to create bot: ${err.message}`, 'error');
+      lastError = err.message;
+      setTimeout(() => createBot(), 5000);
+      return;
+    }
 
-  bot.on('spawn', () => {
-    botReady = true;
-    addLog('✅ Spawned in world', 'success');
-    try { bot.chat('Hello! I am ABDOU_BOT_2024 on Render!'); } catch(e) {}
-  });
-
-  bot.on('error', (err) => {
-    lastError = err.message;
     botReady = false;
-    addLog(`❌ Error: ${err.message}`, 'error');
-  });
+    lastError = null;
 
-  bot.on('end', (reason) => {
-    botReady = false;
-    lastError = reason || 'Disconnected';
-    addLog(`⚠️ Disconnected: ${reason || 'Unknown'}`, 'warn');
-    setTimeout(() => {
-      addLog('🔄 Reconnecting...', 'info');
-      createBot();
-    }, 5000);
-  });
+    bot.on('login', () => {
+      botUsername = bot.username;
+      addLog(`✅ Logged in as ${bot.username}`, 'success');
+    });
 
-  bot.on('kicked', (reason, loggedIn) => {
-    botReady = false;
-    lastError = reason;
-    addLog(`👢 Kicked: ${reason}`, 'warn');
-    setTimeout(() => {
-      addLog('🔄 Reconnecting after kick...', 'info');
-      createBot();
-    }, 5000);
-  });
+    bot.on('spawn', () => {
+      botReady = true;
+      addLog('✅ Spawned in world', 'success');
+      
+      // Start anti-AFK
+      startAntiAFK();
+      
+      // Send welcome message
+      try { bot.chat('Hello! I am ABDOU_BOT_2024 on Render! I will stay online forever!'); } catch(e) {}
+      
+      // Update last activity
+      lastActivity = Date.now();
+    });
 
-  // ── Additional debug (shows version detected) ──
-  bot.once('connect', () => {
-    addLog('🔌 Connected to server', 'info');
+    bot.on('error', (err) => {
+      lastError = err.message;
+      botReady = false;
+      addLog(`❌ Error: ${err.message}`, 'error');
+      
+      if (err.message.includes('version')) {
+        addLog(`💡 Version mismatch! Check your Aternos server version.`, 'warn');
+      }
+    });
+
+    bot.on('end', (reason) => {
+      botReady = false;
+      lastError = reason || 'Disconnected';
+      addLog(`⚠️ Disconnected: ${reason || 'Unknown'}`, 'warn');
+      
+      // Clear anti-AFK
+      if (afkInterval) {
+        clearInterval(afkInterval);
+        afkInterval = null;
+      }
+      
+      // Exponential backoff reconnect
+      reconnectAttempts++;
+      let delay = Math.min(5000 + (reconnectAttempts * 2000), 60000);
+      addLog(`🔄 Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts})`, 'info');
+      
+      setTimeout(() => {
+        createBot();
+      }, delay);
+    });
+
+    bot.on('kicked', (reason, loggedIn) => {
+      botReady = false;
+      lastError = reason;
+      addLog(`👢 Kicked: ${reason}`, 'warn');
+      
+      if (afkInterval) {
+        clearInterval(afkInterval);
+        afkInterval = null;
+      }
+      
+      reconnectAttempts++;
+      let delay = Math.min(5000 + (reconnectAttempts * 2000), 60000);
+      addLog(`🔄 Reconnecting in ${delay/1000}s... (attempt ${reconnectAttempts})`, 'info');
+      
+      setTimeout(() => {
+        createBot();
+      }, delay);
+    });
+
+    bot.on('connect', () => {
+      addLog('🔌 Connected to server', 'info');
+    });
+
+    // Handle chat events to update last activity
+    bot.on('message', (message) => {
+      lastActivity = Date.now();
+    });
   });
 }
 
-// Start the bot
+// ─── START BOT ──────────────────────────────────────────
+addLog(`🚀 Starting ABDOU-BOT...`, 'info');
 createBot();
 
 // ─── EXPRESS MIDDLEWARE ──────────────────────────────
@@ -143,16 +278,17 @@ app.get('/', (req, res) => {
     .log-error { color: #f85149; }
     .log-warn { color: #d29922; }
     .footer { margin-top: 20px; text-align: center; color: #8b949e; font-size: 0.8rem; }
-    .flex-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-    .badge { background: #30363d; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; }
-    .memory-bar { width: 100%; height: 8px; background: #30363d; border-radius: 4px; margin-top: 5px; }
-    .memory-bar-fill { height: 100%; background: #58a6ff; border-radius: 4px; transition: width 0.3s; }
-    .version-badge { background: #1f6feb; padding: 2px 10px; border-radius: 12px; font-size: 0.7rem; color: white; display: inline-block; }
+    .highlight { background: #1f6feb33; padding: 10px; border-radius: 6px; border-left: 3px solid #1f6feb; margin: 10px 0; }
+    .badge-green { background: #2ea04333; color: #2ea043; padding: 2px 10px; border-radius: 12px; font-size: 0.8rem; }
   </style>
 </head>
 <body>
 <div class="container">
-  <h1>⛏️ ABDOU-BOT Dashboard <span class="version-badge">Auto-Version</span></h1>
+  <h1>⛏️ ABDOU-BOT Dashboard <span class="badge-green">🛡️ Anti-AFK</span></h1>
+
+  <div class="highlight">
+    💡 <strong>Make sure your Aternos server is RUNNING</strong> (green "Online" status) and <strong>set to "Cracked" mode</strong>
+  </div>
 
   <!-- Status Card -->
   <div class="card">
@@ -162,7 +298,9 @@ app.get('/', (req, res) => {
       <div class="status-item"><div class="label">Server</div><div class="value" style="font-size:1rem;">Power69.aternos.me:42959</div></div>
       <div class="status-item"><div class="label">Version</div><div class="value" style="font-size:1rem;" id="version">Auto</div></div>
       <div class="status-item"><div class="label">Uptime</div><div class="value" id="uptime">0s</div></div>
+      <div class="status-item"><div class="label">Reconnect Attempts</div><div class="value" id="reconnectAttempts">0</div></div>
       <div class="status-item"><div class="label">Memory</div><div class="value" id="memory">0 MB</div></div>
+      <div class="status-item"><div class="label">Anti-AFK</div><div class="value" style="font-size:1.2rem;" id="afkStatus">🟢 Active</div></div>
     </div>
     <div class="memory-bar"><div class="memory-bar-fill" id="memBar" style="width:0%"></div></div>
     <div id="lastError" style="margin-top:10px;color:#f85149;"></div>
@@ -175,6 +313,7 @@ app.get('/', (req, res) => {
       <button class="btn btn-primary" onclick="sendCommand()">Send</button>
       <button class="btn btn-secondary" onclick="sendCommand('/list')">/list</button>
       <button class="btn btn-secondary" onclick="sendCommand('/seed')">/seed</button>
+      <button class="btn btn-secondary" onclick="sendCommand('/whereami')">/whereami</button>
       <button class="btn btn-warning" onclick="reconnectBot()">🔄 Reconnect</button>
       <button class="btn btn-danger" onclick="clearLogs()">🗑️ Clear Logs</button>
     </div>
@@ -187,7 +326,7 @@ app.get('/', (req, res) => {
   </div>
 
   <div class="footer">
-    ABDOU-BOT • Auto-version detection • Minimal memory • No data scraping
+    ABDOU-BOT • Anti-AFK • Permanent connection • Auto-reconnect • No data scraping
   </div>
 </div>
 
@@ -223,6 +362,9 @@ app.get('/', (req, res) => {
         document.getElementById('memory').textContent = data.memoryMB + ' MB';
         document.getElementById('memBar').style.width = Math.min(data.memoryPercent, 100) + '%';
         document.getElementById('version').textContent = data.version || 'Auto';
+        document.getElementById('reconnectAttempts').textContent = data.reconnectAttempts || 0;
+        document.getElementById('afkStatus').textContent = data.afkActive ? '🟢 Active' : '🔴 Inactive';
+        document.getElementById('afkStatus').style.color = data.afkActive ? '#2ea043' : '#f85149';
         if (data.lastError) {
           document.getElementById('lastError').textContent = '⚠️ ' + data.lastError;
         } else {
@@ -293,7 +435,9 @@ app.get('/status', (req, res) => {
     memoryMB: memMB,
     memoryPercent: memPercent,
     version: bot?.version || 'Auto',
-    lastError: lastError
+    lastError: lastError,
+    reconnectAttempts: reconnectAttempts,
+    afkActive: afkInterval !== null && botReady
   });
 });
 
@@ -307,7 +451,12 @@ app.post('/clear-logs', (req, res) => {
 });
 
 app.post('/reconnect', (req, res) => {
-  addLog('Manual reconnect triggered', 'warn');
+  addLog('🔄 Manual reconnect triggered', 'warn');
+  reconnectAttempts = 0;
+  if (afkInterval) {
+    clearInterval(afkInterval);
+    afkInterval = null;
+  }
   if (bot) {
     try { bot.end('Manual reconnect'); } catch(e) {}
     setTimeout(() => { createBot(); }, 1000);
@@ -323,7 +472,8 @@ app.get('/command', (req, res) => {
   if (!botReady) return res.status(503).send('Bot not ready');
   try {
     bot.chat(cmd);
-    addLog('Command sent: ' + cmd, 'info');
+    addLog('💬 Command sent: ' + cmd, 'info');
+    lastActivity = Date.now();
     res.send('OK');
   } catch(e) {
     res.status(500).send('Error: ' + e.message);
@@ -333,6 +483,7 @@ app.get('/command', (req, res) => {
 // ─── START SERVER ──────────────────────────────────────
 app.listen(PORT, () => {
   console.log('🌐 Dashboard running on port ' + PORT);
-  console.log('🤖 Bot configured for Power69.aternos.me:42959 as ABDOU_BOT_2024');
-  console.log('💡 Auto-version detection enabled (works with 1.20.2, 1.21, etc.)');
+  console.log('🤖 Bot configured for Power69.aternos.me:42959');
+  console.log('🛡️ Anti-AFK protection enabled');
+  console.log('🔄 Permanent connection mode active');
 });
