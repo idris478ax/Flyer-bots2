@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000; // ✅ Render.com needs this!
 const botOptions = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: 'YourBotName', // Change this to your desired bot name
+  username: 'ABDOU-PRO-BOT', // Change this to your desired bot name
   version: false, // auto-detect
   auth: 'offline', // offline mode for Aternos
 };
