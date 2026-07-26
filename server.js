@@ -11,15 +11,15 @@ const DEFAULTS = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: 'dreamz',
-  version: false,        // AUTO-DETECT
+  version: false,        // AUTO-DETECT – never fails because of version
   offline: true
 };
 
 // ---------- CONFIG ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
 const DASHBOARD_PASSWORD = 'nounou123_';
-const RECONNECT_DELAY = 10000;            // 10 seconds between auto-retries
-const CONNECTION_TIMEOUT = 40000;         // 40 seconds (increased)
+const RETRY_DELAY = 10000;              // 10 seconds between attempts
+const CONNECTION_TIMEOUT = 40000;       // 40 seconds before assuming failure
 const MAX_CONSOLE_LINES = 200;
 
 const AFK_MOVE_INTERVAL_MIN = 30;
@@ -38,7 +38,7 @@ let afkTimers = { move: null, chat: null };
 let customCmds = [];
 let consoleLog = [];
 let connectionTimeout = null;
-let autoRetryTimer = null;
+let retryTimer = null;
 
 // ---------- EXPRESS + SOCKET.IO ----------
 const app = express();
@@ -48,6 +48,7 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.static('public'));
 
+// ---------- AUTH ----------
 app.post('/api/login', (req, res) => {
   if (req.body.password === DASHBOARD_PASSWORD) {
     const token = jwt.sign({ auth: true }, JWT_SECRET, { expiresIn: '24h' });
@@ -90,11 +91,12 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  const botStatus = bot ? (bot.entity ? 'online' : 'connecting') : 'offline';
+  // Send current state
+  const state = bot ? (bot.entity ? 'online' : 'connecting') : 'offline';
   socket.emit('botStatus', {
     connected: bot ? true : false,
     connecting: bot && !bot.entity,
-    state: botStatus
+    state
   });
   if (bot && bot.entity) {
     socket.emit('telemetry', getTelemetry());
@@ -104,18 +106,18 @@ io.on('connection', (socket) => {
   socket.emit('antiAfkStatus', afkEnabled);
   socket.emit('customCommands', customCmds);
 
-  if (botOpts) {
-    fetchServerStatus(botOpts.host, botOpts.port).then(info => socket.emit('serverStatus', info));
-  } else {
-    fetchServerStatus(DEFAULTS.host, DEFAULTS.port).then(info => socket.emit('serverStatus', info));
-  }
+  // Immediately show server status
+  const host = botOpts ? botOpts.host : DEFAULTS.host;
+  const port = botOpts ? botOpts.port : DEFAULTS.port;
+  fetchServerStatus(host, port).then(info => socket.emit('serverStatus', info));
 
+  // Commands from client
   socket.on('connectBot', (opts) => {
     if (bot) {
       socket.emit('errorMsg', 'Bot already connected.');
       return;
     }
-    stopAutoRetry();
+    stopRetry();
     startBot(opts);
   });
 
@@ -153,10 +155,10 @@ function clearConnectionTimeout() {
   }
 }
 
-function stopAutoRetry() {
-  if (autoRetryTimer) {
-    clearTimeout(autoRetryTimer);
-    autoRetryTimer = null;
+function stopRetry() {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
   }
 }
 
@@ -171,7 +173,7 @@ function startBot(opts) {
       host: opts.host,
       port: opts.port,
       username: opts.username,
-      version: opts.version || false,   // false = auto
+      version: opts.version || false,   // false = auto-detect
       auth: opts.offline ? 'offline' : 'microsoft'
     });
   } catch (e) {
@@ -184,10 +186,11 @@ function startBot(opts) {
   bindBotEvents(bot);
   addLog(`Connecting to ${opts.host}:${opts.port}...`, 'system');
 
+  // Set connection timeout
   clearConnectionTimeout();
   connectionTimeout = setTimeout(() => {
     if (bot && !bot.entity) {
-      addLog('Connection timed out – server unreachable or wrong details', 'error');
+      addLog('Connection timed out – retrying...', 'error');
       bot.quit();
       bot = null;
       io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
@@ -199,11 +202,11 @@ function startBot(opts) {
 
 function scheduleRetry() {
   if (manualStop) return;
-  stopAutoRetry();
-  addLog(`Retrying in ${RECONNECT_DELAY / 1000}s...`, 'system');
-  autoRetryTimer = setTimeout(() => {
+  stopRetry();
+  addLog(`Retrying in ${RETRY_DELAY / 1000}s...`, 'system');
+  retryTimer = setTimeout(() => {
     if (!manualStop && botOpts) startBot(botOpts);
-  }, RECONNECT_DELAY);
+  }, RETRY_DELAY);
 }
 
 function stopBot(manual = false) {
@@ -211,7 +214,7 @@ function stopBot(manual = false) {
   manualStop = manual;
   stopAfk();
   clearConnectionTimeout();
-  stopAutoRetry();
+  stopRetry();
   bot.quit();
   bot = null;
   io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
@@ -222,7 +225,7 @@ function stopBot(manual = false) {
 function bindBotEvents(bot) {
   bot.on('login', () => {
     clearConnectionTimeout();
-    stopAutoRetry();
+    stopRetry();
     startTime = Date.now();
     addLog(`Connected as ${bot.username}`, 'system');
     io.emit('botStatus', { connected: true, connecting: false, state: 'online' });
@@ -276,7 +279,7 @@ function bindBotEvents(bot) {
   }
 }
 
-// Telemetry + server info broadcast every 3 seconds
+// Telemetry + server status every 3 seconds
 setInterval(() => {
   if (bot && bot.entity) {
     io.emit('telemetry', getTelemetry());
@@ -344,7 +347,7 @@ function addLog(text, style = 'default') {
   io.emit('console', entry);
 }
 
-// ---------- AUTO-CONNECT ON STARTUP ----------
+// ---------- AUTO-START ON LAUNCH ----------
 function initialConnect() {
   botOpts = { ...DEFAULTS };
   startBot(botOpts);
