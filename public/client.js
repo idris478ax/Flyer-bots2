@@ -9,6 +9,13 @@ function loadSettings() {
     document.getElementById('port').value = saved.port || 42959;
     document.getElementById('name').value = saved.username || 'dreamz';
     document.getElementById('ver').value = saved.version || '';
+    document.getElementById('offline').checked = saved.offline !== false;
+  } else {
+    document.getElementById('ip').value = 'Power69.aternos.me';
+    document.getElementById('port').value = 42959;
+    document.getElementById('name').value = 'dreamz';
+    document.getElementById('ver').value = '';
+    document.getElementById('offline').checked = true;
   }
 }
 
@@ -17,38 +24,9 @@ function saveSettings() {
     ip: document.getElementById('ip').value,
     port: document.getElementById('port').value,
     username: document.getElementById('name').value,
-    version: document.getElementById('ver').value
+    version: document.getElementById('ver').value,
+    offline: document.getElementById('offline').checked
   }));
-}
-
-// Anti‑AFK settings
-function loadAfkSettings() {
-  const saved = JSON.parse(localStorage.getItem('afkSettings'));
-  if (saved) {
-    document.getElementById('moveMin').value = saved.moveMinSec || 30;
-    document.getElementById('moveMax').value = saved.moveMaxSec || 40;
-    document.getElementById('moveDist').value = saved.moveDistanceBlocks || 5;
-    document.getElementById('chatMin').value = saved.chatMinMin || 10;
-    document.getElementById('chatMax').value = saved.chatMaxMin || 13;
-    document.getElementById('chatMsgs').value = (saved.chatMessages || []).join(', ');
-    document.getElementById('afkToggle').checked = saved.enabled !== false;
-  }
-}
-
-function saveAfkSettingsToStorage(settings) {
-  localStorage.setItem('afkSettings', JSON.stringify(settings));
-}
-
-function getAfkSettingsFromForm() {
-  return {
-    enabled: document.getElementById('afkToggle').checked,
-    moveMinSec: parseInt(document.getElementById('moveMin').value) || 30,
-    moveMaxSec: parseInt(document.getElementById('moveMax').value) || 40,
-    moveDistanceBlocks: parseFloat(document.getElementById('moveDist').value) || 5,
-    chatMinMin: parseInt(document.getElementById('chatMin').value) || 10,
-    chatMaxMin: parseInt(document.getElementById('chatMax').value) || 13,
-    chatMessages: document.getElementById('chatMsgs').value.split(',').map(s => s.trim()).filter(s => s)
-  };
 }
 
 // Login
@@ -80,14 +58,14 @@ document.getElementById('loginBtn').addEventListener('click', async () => {
 
 function initApp() {
   loadSettings();
-  loadAfkSettings();
   connectSocket();
   setupTabs();
   setupEventListeners();
 }
 
 function setupTabs() {
-  document.querySelectorAll('.sidebar li').forEach(tab => {
+  const tabs = document.querySelectorAll('.sidebar li');
+  tabs.forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelector('.sidebar li.active').classList.remove('active');
       tab.classList.add('active');
@@ -111,32 +89,26 @@ function setupEventListeners() {
       host: document.getElementById('ip').value,
       port: parseInt(document.getElementById('port').value) || 42959,
       username: document.getElementById('name').value,
-      version: document.getElementById('ver').value || false
+      version: document.getElementById('ver').value || false,
+      offline: document.getElementById('offline').checked
     });
     saveSettings();
   });
 
-  document.getElementById('disconnectBtn').addEventListener('click', () => socket.emit('disconnectBot'));
-
-  document.getElementById('autoReconnectToggle').addEventListener('change', (e) => {
-    socket.emit('setAutoReconnect', e.target.checked);
+  document.getElementById('disconnectBtn').addEventListener('click', () => {
+    socket.emit('disconnectBot');
   });
 
-  document.getElementById('saveAfkSettings').addEventListener('click', () => {
-    const settings = getAfkSettingsFromForm();
-    saveAfkSettingsToStorage(settings);
-    socket.emit('updateAfkSettings', settings);
-  });
-
-  document.getElementById('afkToggle').addEventListener('change', () => {
-    const settings = getAfkSettingsFromForm();
-    saveAfkSettingsToStorage(settings);
-    socket.emit('updateAfkSettings', settings);
+  document.getElementById('afkToggle').addEventListener('change', (e) => {
+    socket.emit('toggleAntiAfk', e.target.checked);
   });
 
   document.getElementById('sendMsg').addEventListener('click', () => {
     const msg = document.getElementById('msgInput').value.trim();
-    if (msg) { socket.emit('sendMessage', msg); document.getElementById('msgInput').value = ''; }
+    if (msg) {
+      socket.emit('sendMessage', msg);
+      document.getElementById('msgInput').value = '';
+    }
   });
 
   document.getElementById('addCmd').addEventListener('click', () => {
@@ -152,7 +124,7 @@ function setupEventListeners() {
     }
   });
 
-  ['ip', 'port', 'name', 'ver'].forEach(id => {
+  ['ip', 'port', 'name', 'ver', 'offline'].forEach(id => {
     document.getElementById(id).addEventListener('change', saveSettings);
     document.getElementById(id).addEventListener('keyup', saveSettings);
   });
@@ -165,6 +137,7 @@ function connectSocket() {
     botConnected = status.connected;
     const connectBtn = document.getElementById('connectBtn');
     const disconnectBtn = document.getElementById('disconnectBtn');
+
     if (status.connecting) {
       connectBtn.textContent = 'Connecting...';
       connectBtn.disabled = true;
@@ -180,17 +153,39 @@ function connectSocket() {
       connectBtn.disabled = false;
       disconnectBtn.disabled = true;
       disableInputs(false);
+      if (!status.connected) {
+        document.getElementById('uptime').textContent = '00:00:00';
+        document.getElementById('health').textContent = '--';
+        document.getElementById('hunger').textContent = '--';
+        document.getElementById('pos').textContent = '--';
+        document.getElementById('ping').textContent = '--';
+        document.getElementById('inv').textContent = '--';
+      }
     }
   });
 
-  socket.on('autoReconnect', (value) => {
-    document.getElementById('autoReconnectToggle').checked = value;
+  socket.on('serverStatus', (info) => {
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    const players = document.getElementById('statusPlayers');
+    if (info.online) {
+      dot.className = 'online';
+      text.textContent = 'Online';
+      players.textContent = `${info.players}/${info.maxPlayers} players`;
+    } else {
+      dot.className = '';
+      text.textContent = 'Offline';
+      players.textContent = '';
+    }
   });
 
-  socket.on('serverStatus', (info) => {
-    document.getElementById('statusDot').className = info.online ? 'online' : '';
-    document.getElementById('statusText').textContent = info.online ? 'Online' : 'Offline';
-    document.getElementById('statusPlayers').textContent = info.online ? `${info.players}/${info.maxPlayers} players` : '';
+  socket.on('consoleInit', (lines) => {
+    lines.forEach(addConsoleLine);
+  });
+
+  socket.on('console', (line) => {
+    addConsoleLine(line);
+    if (line.style === 'anti-afk') addAfkLog(line);
   });
 
   socket.on('telemetry', (t) => {
@@ -198,45 +193,26 @@ function connectSocket() {
     document.getElementById('uptime').textContent = msToTime(t.uptime);
     document.getElementById('health').textContent = t.health.toFixed(1);
     document.getElementById('hunger').textContent = t.hunger.toFixed(1);
-    document.getElementById('xp').textContent = t.xpLevel;
+    document.getElementById('pos').textContent = `${Math.floor(t.position.x)}, ${Math.floor(t.position.y)}, ${Math.floor(t.position.z)}`;
     document.getElementById('ping').textContent = t.ping + 'ms';
     document.getElementById('inv').textContent = t.inventoryCount;
-    document.getElementById('pos').textContent = `${Math.floor(t.position.x)}, ${Math.floor(t.position.y)}, ${Math.floor(t.position.z)}`;
-    document.getElementById('biome').textContent = t.biome;
-    document.getElementById('dim').textContent = t.dimension;
   });
 
   socket.on('serverInfo', (info) => {
-    document.getElementById('onlinePlayers').textContent = info.onlinePlayers || '0';
+    if (!info) return;
+    document.getElementById('onlinePlayers').textContent = info.onlinePlayers || '--';
     document.getElementById('serverBrand').textContent = info.brand || '--';
     document.getElementById('serverVersion').textContent = info.version || '--';
   });
 
-  socket.on('playerList', (players) => {
-    const tbody = document.getElementById('playerTable').querySelector('tbody');
-    tbody.innerHTML = '';
-    players.forEach(p => {
-      const tr = document.createElement('tr');
-      const time = new Date(p.onlineTime * 1000).toISOString().substr(11, 8);
-      tr.innerHTML = `<td>${p.username}</td><td>${time}</td><td>${p.ping}</td><td>${p.position ? p.position.x + ', ' + p.position.y + ', ' + p.position.z : 'N/A'}</td>`;
-      tbody.appendChild(tr);
-    });
+  socket.on('antiAfkStatus', (v) => {
+    document.getElementById('afkToggle').checked = v;
   });
 
-  socket.on('antiAfkSettings', (settings) => {
-    document.getElementById('moveMin').value = settings.moveMinSec;
-    document.getElementById('moveMax').value = settings.moveMaxSec;
-    document.getElementById('moveDist').value = settings.moveDistanceBlocks;
-    document.getElementById('chatMin').value = settings.chatMinMin;
-    document.getElementById('chatMax').value = settings.chatMaxMin;
-    document.getElementById('chatMsgs').value = settings.chatMessages.join(', ');
-    document.getElementById('afkToggle').checked = settings.enabled;
-    saveAfkSettingsToStorage(settings);
+  socket.on('customCommands', (cmds) => {
+    renderCmdTable(cmds);
   });
 
-  socket.on('consoleInit', (lines) => lines.forEach(addConsoleLine));
-  socket.on('console', (line) => { addConsoleLine(line); if (line.style === 'anti-afk') addAfkLog(line); });
-  socket.on('customCommands', (cmds) => renderCmdTable(cmds));
   socket.on('errorMsg', (msg) => alert(msg));
 }
 
@@ -274,13 +250,15 @@ function renderCmdTable(cmds) {
 }
 
 function msToTime(ms) {
-  const s = Math.floor(ms / 1000);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const sec = s % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+  const seconds = Math.floor(ms / 1000);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
 function disableInputs(disabled) {
-  ['ip', 'port', 'name', 'ver'].forEach(id => document.getElementById(id).disabled = disabled);
+  ['ip', 'port', 'name', 'ver', 'offline'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
 }
