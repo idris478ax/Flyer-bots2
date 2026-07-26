@@ -44,9 +44,15 @@
             <div class="input-group"><label>Bot Username</label><input type="text" id="name" placeholder="dreamz"></div>
             <div class="input-group"><label>Version (auto if empty)</label><input type="text" id="ver" placeholder="auto"></div>
           </div>
-          <div style="display:flex;gap:1rem;margin-top:1rem;align-items:center;">
-            <label class="offline-label"><input type="checkbox" id="offline" checked> Offline mode</label>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1rem;">
             <div class="server-status"><span id="statusDot"></span><span id="statusText">Checking...</span><span id="statusPlayers"></span></div>
+            <div class="toggle-container" style="margin:0;">
+              <span>Auto‑Reconnect</span>
+              <label class="toggle">
+                <input type="checkbox" id="autoReconnectToggle" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
           <div style="display:flex;gap:1rem;margin-top:1rem;">
             <button class="btn connect-btn" id="connectBtn">Connect</button>
@@ -97,8 +103,8 @@
         <div class="card">
           <h3>Anti‑AFK Settings</h3>
           <div class="grid">
-            <div class="input-group"><label>Move Interval Min (s)</label><input type="number" id="moveMin" value="30"></div>
-            <div class="input-group"><label>Move Interval Max (s)</label><input type="number" id="moveMax" value="40"></div>
+            <div class="input-group"><label>Move Min (s)</label><input type="number" id="moveMin" value="30"></div>
+            <div class="input-group"><label>Move Max (s)</label><input type="number" id="moveMax" value="40"></div>
             <div class="input-group"><label>Move Distance (blocks)</label><input type="number" id="moveDist" value="5" step="0.5"></div>
             <div class="input-group"><label>Chat Min (min)</label><input type="number" id="chatMin" value="10"></div>
             <div class="input-group"><label>Chat Max (min)</label><input type="number" id="chatMax" value="13"></div>
