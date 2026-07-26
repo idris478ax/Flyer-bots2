@@ -6,28 +6,34 @@ const jwt = require('jsonwebtoken');
 const mineflayer = require('mineflayer');
 const { status } = require('minecraft-server-util');
 
+// Global safety
+process.on('unhandledRejection', (reason) => console.error('Unhandled Rejection:', reason));
+process.on('uncaughtException', (err) => console.error('Uncaught Exception:', err));
+
 // ---------- HARDCODED SERVER ----------
 const DEFAULTS = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: 'dreamz',
-  version: false,
-  offline: true
+  version: false,          // auto-detect
+  offline: true            // forced offline
 };
 
 // ---------- CONFIG ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
 const DASHBOARD_PASSWORD = 'nounou123_';
-const RETRY_DELAY = 10000;
-const CONNECTION_TIMEOUT = 40000;
+const RETRY_DELAY = 10000;            // 10 seconds
+const CONNECTION_TIMEOUT = 40000;     // 40 seconds
 const MAX_CONSOLE_LINES = 200;
 
+// ---------- GLOBAL STATE ----------
 let bot = null;
 let botOpts = null;
 let manualStop = false;
-let autoReconnect = true;
+let autoReconnect = true;             // always ON at start
 let startTime = null;
 
+// Anti‑AFK settings (editable)
 let afkSettings = {
   enabled: true,
   moveMinSec: 30,
@@ -45,9 +51,11 @@ let connectionTimeout = null;
 let retryTimer = null;
 const playerJoinTimes = new Map();
 
+// Walking speed (m/s) for move duration
 const WALK_SPEED = 4.317;
 function moveDuration(blocks) { return (blocks / WALK_SPEED) * 1000; }
 
+// ---------- EXPRESS + SOCKET.IO ----------
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server);
@@ -55,6 +63,7 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.static('public'));
 
+// Auth
 app.post('/api/login', (req, res) => {
   if (req.body.password === DASHBOARD_PASSWORD) {
     const token = jwt.sign({ auth: true }, JWT_SECRET, { expiresIn: '24h' });
@@ -63,19 +72,29 @@ app.post('/api/login', (req, res) => {
   res.status(401).json({ error: 'Wrong password' });
 });
 
+// Server ping
 async function fetchServerStatus(host, port) {
   try {
     const res = await status(host, port, { timeout: 5000 });
-    return { online: true, players: res.players.online, maxPlayers: res.players.max, version: res.version.name, motd: res.motd.clean };
+    return {
+      online: true,
+      players: res.players.online,
+      maxPlayers: res.players.max,
+      version: res.version.name
+    };
   } catch (e) {
     return { online: false };
   }
 }
+
 function broadcastServerStatus() {
   if (!botOpts) return;
-  fetchServerStatus(botOpts.host, botOpts.port).then(info => io.emit('serverStatus', info));
+  fetchServerStatus(botOpts.host, botOpts.port)
+    .then(info => io.emit('serverStatus', info))
+    .catch(() => {});
 }
 
+// Socket.IO auth
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error('No token'));
@@ -86,8 +105,13 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  // Send current state
   const state = bot ? (bot.entity ? 'online' : 'connecting') : 'offline';
-  socket.emit('botStatus', { connected: !!bot, connecting: bot && !bot.entity, state });
+  socket.emit('botStatus', {
+    connected: !!bot,
+    connecting: bot && !bot.entity,
+    state
+  });
   socket.emit('autoReconnect', autoReconnect);
   if (bot && bot.entity) {
     socket.emit('telemetry', getTelemetry());
@@ -98,14 +122,21 @@ io.on('connection', (socket) => {
   socket.emit('antiAfkSettings', afkSettings);
   socket.emit('customCommands', customCmds);
 
+  // Send initial server status
   const host = botOpts ? botOpts.host : DEFAULTS.host;
   const port = botOpts ? botOpts.port : DEFAULTS.port;
-  fetchServerStatus(host, port).then(info => socket.emit('serverStatus', info));
+  fetchServerStatus(host, port)
+    .then(info => socket.emit('serverStatus', info))
+    .catch(() => {});
 
+  // ---------- CLIENT EVENTS ----------
   socket.on('connectBot', (opts) => {
-    if (bot) { socket.emit('errorMsg', 'Bot already connected.'); return; }
+    if (bot) {
+      socket.emit('errorMsg', 'Bot already connected.');
+      return;
+    }
     stopRetry();
-    startBot({ ...opts, offline: true });
+    startBot({ ...opts, offline: true });   // force offline
   });
 
   socket.on('disconnectBot', () => stopBot(true));
@@ -120,7 +151,10 @@ io.on('connection', (socket) => {
   socket.on('updateAfkSettings', (newSettings) => {
     afkSettings = { ...afkSettings, ...newSettings };
     io.emit('antiAfkSettings', afkSettings);
-    if (bot && afkSettings.enabled) { stopAfk(); startAfk(); }
+    if (bot && afkSettings.enabled) {
+      stopAfk();
+      startAfk();
+    }
     addLog('[AntiAFK] Settings updated', 'system');
   });
 
@@ -138,6 +172,7 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---------- BOT MANAGEMENT ----------
 function startBot(opts) {
   botOpts = opts;
   manualStop = false;
@@ -151,7 +186,7 @@ function startBot(opts) {
       port: opts.port,
       username: opts.username,
       version: opts.version || false,
-      auth: 'offline'
+      auth: 'offline'    // hardcoded offline
     });
   } catch (e) {
     addLog('Connection error: ' + e.message, 'error');
@@ -163,11 +198,12 @@ function startBot(opts) {
   bindBotEvents(bot);
   addLog(`Connecting to ${opts.host}:${opts.port}...`, 'system');
 
+  // Connection timeout
   clearConnectionTimeout();
   connectionTimeout = setTimeout(() => {
     if (bot && !bot.entity) {
       addLog('Connection timed out – retrying...', 'error');
-      bot.quit();
+      try { bot.end('Timeout'); } catch (e) {}
       bot = null;
       io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
       scheduleRetry();
@@ -191,7 +227,7 @@ function stopBot(manual = false) {
   stopAfk();
   clearConnectionTimeout();
   stopRetry();
-  bot.quit();
+  try { bot.end('Disconnect'); } catch (e) {}
   bot = null;
   io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
   addLog('Bot disconnected', 'system');
@@ -244,24 +280,24 @@ function bindBotEvents(bot) {
   }
 }
 
-// ---------- DATA STREAM every 5 seconds (instead of 1) ----------
+// ---------- DATA STREAMS (lightweight) ----------
+// Telemetry & player list every 5 seconds
 setInterval(() => {
   if (bot && bot.entity) {
     io.emit('telemetry', getTelemetry());
     io.emit('serverInfo', getServerInfo());
     io.emit('playerList', getPlayerList());
   }
-  if (botOpts) broadcastServerStatus();
 }, 5000);
+
+// Server status ping every 30 seconds
+setInterval(() => {
+  if (botOpts) broadcastServerStatus();
+}, 30000);
 
 function getTelemetry() {
   if (!bot || !bot.entity) return null;
   const pos = bot.entity.position;
-  let biome = 'Unknown';
-  try {
-    const block = bot.blockAt(pos);
-    if (block && block.biome && block.biome.name) biome = block.biome.name;
-  } catch (e) {}
   return {
     uptime: startTime ? Date.now() - startTime : 0,
     health: bot.health,
@@ -270,7 +306,7 @@ function getTelemetry() {
     ping: bot.player ? bot.player.ping : 0,
     inventoryCount: bot.inventory.items().length,
     xpLevel: bot.experience ? bot.experience.level : 0,
-    biome,
+    biome: 'N/A',      // removed heavy blockAt
     dimension: bot.game ? bot.game.dimension : 'Unknown'
   };
 }
@@ -304,6 +340,7 @@ function getPlayerList() {
   return list;
 }
 
+// ---------- ANTI‑AFK ----------
 function startAfk() {
   if (!bot || !afkSettings.enabled) return;
   stopAfk();
@@ -346,11 +383,13 @@ function addLog(text, style = 'default') {
 function stopRetry() { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } }
 function clearConnectionTimeout() { if (connectionTimeout) { clearTimeout(connectionTimeout); connectionTimeout = null; } }
 
+// Auto‑start
 function initialConnect() {
   botOpts = { ...DEFAULTS };
   startBot(botOpts);
 }
 
+// ---------- START SERVER ----------
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Dashboard running on port ${PORT}`);
