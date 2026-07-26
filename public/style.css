@@ -42,7 +42,6 @@ body { font-family: 'Inter', sans-serif; background: #0f0f0f; color: #e0e0e0; he
 .stat label { color: #888; font-size: 0.85rem; }
 .stat span { font-size: 1.2rem; font-weight: 700; color: #fff; }
 
-/* Colorful telemetry cards */
 .telemetry-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; }
 .stat-card { padding: 1rem; border-radius: 0.5rem; text-align: center; border-left: 4px solid; }
 .stat-card.c1 { background: #1a2a3a; border-left-color: #00c896; }
@@ -57,13 +56,11 @@ body { font-family: 'Inter', sans-serif; background: #0f0f0f; color: #e0e0e0; he
 .stat-card label { font-size: 0.8rem; color: #aaa; display: block; margin-bottom: 0.3rem; }
 .stat-card span { font-size: 1.3rem; font-weight: 700; color: #fff; }
 
-/* Player table */
 .player-table { width: 100%; border-collapse: collapse; }
 .player-table th, .player-table td { padding: 0.8rem; text-align: left; border-bottom: 1px solid #333; }
 .player-table th { color: #888; }
 .player-table td { color: #ddd; }
 
-/* Console */
 .console-box { background: #000; color: #0f0; font-family: monospace; padding: 1rem; border-radius: 0.5rem; height: 400px; overflow-y: auto; margin-bottom: 1rem; border: 1px solid #333; }
 .console-line { margin-bottom: 0.2rem; }
 .console-line.system { color: #888; }
