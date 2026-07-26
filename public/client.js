@@ -118,19 +118,16 @@ function setupEventListeners() {
 
   document.getElementById('disconnectBtn').addEventListener('click', () => socket.emit('disconnectBot'));
 
-  // Auto‑reconnect toggle
   document.getElementById('autoReconnectToggle').addEventListener('change', (e) => {
     socket.emit('setAutoReconnect', e.target.checked);
   });
 
-  // Anti‑AFK save button
   document.getElementById('saveAfkSettings').addEventListener('click', () => {
     const settings = getAfkSettingsFromForm();
     saveAfkSettingsToStorage(settings);
     socket.emit('updateAfkSettings', settings);
   });
 
-  // Auto-save on toggle change
   document.getElementById('afkToggle').addEventListener('change', () => {
     const settings = getAfkSettingsFromForm();
     saveAfkSettingsToStorage(settings);
