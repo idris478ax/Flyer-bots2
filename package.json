@@ -1,7 +1,7 @@
 {
   "name": "minebot-dashboard",
-  "version": "1.0.0",
-  "description": "Mineflayer bot with web dashboard",
+  "version": "2.0.0",
+  "description": "Perfect Mineflayer bot with live dashboard",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,11 +10,11 @@
     "node": ">=18"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "socket.io": "^4.7.4",
-    "jsonwebtoken": "^9.0.2",
     "cookie-parser": "^1.4.6",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "minecraft-server-util": "^5.4.4",
     "mineflayer": "^4.20.0",
-    "minecraft-server-util": "^5.4.4"
+    "socket.io": "^4.7.4"
   }
 }
