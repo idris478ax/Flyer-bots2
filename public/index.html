@@ -27,6 +27,8 @@
       <ul>
         <li class="active" data-tab="connection"><i>🔌</i> Connection</li>
         <li data-tab="telemetry"><i>📊</i> Telemetry</li>
+        <li data-tab="players"><i>👥</i> Players</li>
+        <li data-tab="antiafk"><i>🎭</i> Anti‑AFK</li>
         <li data-tab="console"><i>💬</i> Console</li>
         <li data-tab="commands"><i>⚙️</i> Commands</li>
       </ul>
@@ -37,32 +39,14 @@
         <div class="card">
           <h3>Server Connection</h3>
           <div class="grid">
-            <div class="input-group">
-              <label>Server IP</label>
-              <input type="text" id="ip" placeholder="Power69.aternos.me">
-            </div>
-            <div class="input-group">
-              <label>Port</label>
-              <input type="number" id="port" placeholder="42959">
-            </div>
-            <div class="input-group">
-              <label>Bot Username</label>
-              <input type="text" id="name" placeholder="dreamz">
-            </div>
-            <div class="input-group">
-              <label>Version (leave empty for auto)</label>
-              <input type="text" id="ver" placeholder="auto">
-            </div>
+            <div class="input-group"><label>Server IP</label><input type="text" id="ip" placeholder="Power69.aternos.me"></div>
+            <div class="input-group"><label>Port</label><input type="number" id="port" placeholder="42959"></div>
+            <div class="input-group"><label>Bot Username</label><input type="text" id="name" placeholder="dreamz"></div>
+            <div class="input-group"><label>Version (auto if empty)</label><input type="text" id="ver" placeholder="auto"></div>
           </div>
           <div style="display:flex;gap:1rem;margin-top:1rem;align-items:center;">
-            <label class="offline-label">
-              <input type="checkbox" id="offline" checked> Offline mode
-            </label>
-            <div class="server-status" id="serverStatusContainer">
-              <span id="statusDot"></span>
-              <span id="statusText">Checking...</span>
-              <span id="statusPlayers" style="margin-left:auto;"></span>
-            </div>
+            <label class="offline-label"><input type="checkbox" id="offline" checked> Offline mode</label>
+            <div class="server-status"><span id="statusDot"></span><span id="statusText">Checking...</span><span id="statusPlayers"></span></div>
           </div>
           <div style="display:flex;gap:1rem;margin-top:1rem;">
             <button class="btn connect-btn" id="connectBtn">Connect</button>
@@ -75,20 +59,16 @@
       <div class="tab-content" id="tab-telemetry">
         <div class="card">
           <h3>Bot Telemetry</h3>
-          <div class="grid" id="telem">
-            <div class="stat"><label>Uptime</label><span id="uptime">00:00:00</span></div>
-            <div class="stat"><label>Health</label><span id="health">--</span></div>
-            <div class="stat"><label>Hunger</label><span id="hunger">--</span></div>
-            <div class="stat"><label>Position</label><span id="pos">--</span></div>
-            <div class="stat"><label>Ping</label><span id="ping">--</span></div>
-            <div class="stat"><label>Inventory</label><span id="inv">--</span></div>
-          </div>
-          <div class="toggle-container">
-            <span>Anti-AFK</span>
-            <label class="toggle">
-              <input type="checkbox" id="afkToggle" checked>
-              <span class="slider"></span>
-            </label>
+          <div class="telemetry-grid" id="telem">
+            <div class="stat-card c1"><label>Uptime</label><span id="uptime">00:00:00</span></div>
+            <div class="stat-card c2"><label>Health</label><span id="health">--</span></div>
+            <div class="stat-card c3"><label>Hunger</label><span id="hunger">--</span></div>
+            <div class="stat-card c4"><label>XP Level</label><span id="xp">--</span></div>
+            <div class="stat-card c5"><label>Ping</label><span id="ping">--</span></div>
+            <div class="stat-card c6"><label>Inventory</label><span id="inv">--</span></div>
+            <div class="stat-card c7"><label>Position</label><span id="pos">--</span></div>
+            <div class="stat-card c8"><label>Biome</label><span id="biome">--</span></div>
+            <div class="stat-card c9"><label>Dimension</label><span id="dim">--</span></div>
           </div>
         </div>
         <div class="card">
@@ -99,8 +79,42 @@
             <div class="stat"><label>Version</label><span id="serverVersion">--</span></div>
           </div>
         </div>
+      </div>
+
+      <!-- Players Tab -->
+      <div class="tab-content" id="tab-players">
         <div class="card">
-          <h3>Anti-AFK Log</h3>
+          <h3>Online Players</h3>
+          <table class="player-table" id="playerTable">
+            <thead><tr><th>Name</th><th>Online Time</th><th>Ping</th><th>Position</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Anti‑AFK Tab -->
+      <div class="tab-content" id="tab-antiafk">
+        <div class="card">
+          <h3>Anti‑AFK Settings</h3>
+          <div class="grid">
+            <div class="input-group"><label>Move Interval Min (s)</label><input type="number" id="moveMin" value="30"></div>
+            <div class="input-group"><label>Move Interval Max (s)</label><input type="number" id="moveMax" value="40"></div>
+            <div class="input-group"><label>Move Distance (blocks)</label><input type="number" id="moveDist" value="5" step="0.5"></div>
+            <div class="input-group"><label>Chat Min (min)</label><input type="number" id="chatMin" value="10"></div>
+            <div class="input-group"><label>Chat Max (min)</label><input type="number" id="chatMax" value="13"></div>
+          </div>
+          <div class="input-group" style="margin-top:1rem;">
+            <label>Chat Messages (comma separated)</label>
+            <input type="text" id="chatMsgs" value="Hello!, How is everyone?, Nice day!, Anyone here?, Just mining...">
+          </div>
+          <div class="toggle-container" style="margin-top:1rem;">
+            <span>Enable Anti‑AFK</span>
+            <label class="toggle"><input type="checkbox" id="afkToggle" checked><span class="slider"></span></label>
+          </div>
+          <button class="btn" id="saveAfkSettings" style="margin-top:1rem;">Save Settings</button>
+        </div>
+        <div class="card">
+          <h3>Anti‑AFK Log</h3>
           <div class="console-box" id="afkLog"></div>
         </div>
       </div>
