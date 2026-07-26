@@ -2,7 +2,6 @@ const token = localStorage.getItem('token');
 let socket;
 let botConnected = false;
 
-// Load saved settings
 function loadSettings() {
   const saved = JSON.parse(localStorage.getItem('botSettings'));
   if (saved) {
@@ -10,7 +9,6 @@ function loadSettings() {
     document.getElementById('port').value = saved.port || 42959;
     document.getElementById('name').value = saved.username || 'dreamz';
     document.getElementById('ver').value = saved.version || '';
-    document.getElementById('offline').checked = saved.offline !== false;
   }
 }
 
@@ -19,8 +17,7 @@ function saveSettings() {
     ip: document.getElementById('ip').value,
     port: document.getElementById('port').value,
     username: document.getElementById('name').value,
-    version: document.getElementById('ver').value,
-    offline: document.getElementById('offline').checked
+    version: document.getElementById('ver').value
   }));
 }
 
@@ -114,13 +111,17 @@ function setupEventListeners() {
       host: document.getElementById('ip').value,
       port: parseInt(document.getElementById('port').value) || 42959,
       username: document.getElementById('name').value,
-      version: document.getElementById('ver').value || false,
-      offline: document.getElementById('offline').checked
+      version: document.getElementById('ver').value || false
     });
     saveSettings();
   });
 
   document.getElementById('disconnectBtn').addEventListener('click', () => socket.emit('disconnectBot'));
+
+  // Auto‑reconnect toggle
+  document.getElementById('autoReconnectToggle').addEventListener('change', (e) => {
+    socket.emit('setAutoReconnect', e.target.checked);
+  });
 
   // Anti‑AFK save button
   document.getElementById('saveAfkSettings').addEventListener('click', () => {
@@ -129,7 +130,7 @@ function setupEventListeners() {
     socket.emit('updateAfkSettings', settings);
   });
 
-  // Also auto-save on toggle change
+  // Auto-save on toggle change
   document.getElementById('afkToggle').addEventListener('change', () => {
     const settings = getAfkSettingsFromForm();
     saveAfkSettingsToStorage(settings);
@@ -154,7 +155,7 @@ function setupEventListeners() {
     }
   });
 
-  ['ip', 'port', 'name', 'ver', 'offline'].forEach(id => {
+  ['ip', 'port', 'name', 'ver'].forEach(id => {
     document.getElementById(id).addEventListener('change', saveSettings);
     document.getElementById(id).addEventListener('keyup', saveSettings);
   });
@@ -183,6 +184,10 @@ function connectSocket() {
       disconnectBtn.disabled = true;
       disableInputs(false);
     }
+  });
+
+  socket.on('autoReconnect', (value) => {
+    document.getElementById('autoReconnectToggle').checked = value;
   });
 
   socket.on('serverStatus', (info) => {
@@ -280,5 +285,5 @@ function msToTime(ms) {
 }
 
 function disableInputs(disabled) {
-  ['ip', 'port', 'name', 'ver', 'offline'].forEach(id => document.getElementById(id).disabled = disabled);
+  ['ip', 'port', 'name', 'ver'].forEach(id => document.getElementById(id).disabled = disabled);
 }
