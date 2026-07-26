@@ -83,12 +83,11 @@ body { font-family: 'Inter', sans-serif; background: #0f0f0f; color: #e0e0e0; he
 input:checked + .slider { background-color: #00c896; }
 input:checked + .slider:before { transform: translateX(26px); }
 
-.server-status { display: flex; align-items: center; gap: 0.5rem; margin-left: auto; }
+.server-status { display: flex; align-items: center; gap: 0.5rem; }
 #statusDot { width: 10px; height: 10px; border-radius: 50%; background: #f44; }
 #statusDot.online { background: #0f0; }
 #statusText { font-weight: 600; }
 #statusPlayers { color: #aaa; }
-.offline-label { display: flex; align-items: center; gap: 0.5rem; color: #aaa; }
 
 .cmd-list { width: 100%; border-collapse: collapse; }
 .cmd-list th, .cmd-list td { padding: 0.8rem; text-align: left; border-bottom: 1px solid #333; }
