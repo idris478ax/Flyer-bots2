@@ -65,6 +65,7 @@ body{font-family:'Inter',sans-serif;background:#0f0f0f;color:#e0e0e0;height:100v
 .input-group input{width:100%;padding:0.8rem;border-radius:0.5rem;border:none;background:#2a2a2a;color:#fff;font-size:1rem;}
 .btn{width:100%;padding:0.8rem;background:#00c896;border:none;border-radius:0.5rem;color:#000;font-weight:700;font-size:1rem;cursor:pointer;transition:background 0.3s;}
 .btn:hover{background:#00b386;}
+.btn:disabled{opacity:0.6;cursor:not-allowed;}
 .error-msg{color:#ff4d4d;text-align:center;margin-top:0.5rem;display:none;}
 #dashboard{display:none;height:100vh;}
 .sidebar{width:250px;background:#1a1a1a;height:100%;float:left;padding:1.5rem 0;transition:transform 0.3s;z-index:10;}
@@ -138,9 +139,9 @@ input:checked+.slider:before{transform:translateX(26px);}
       <div class="card">
         <h3>Server Connection</h3>
         <div class="grid">
-          <div class="input-group"><label>Server IP</label><input type="text" id="ip" placeholder="localhost" value="localhost"></div>
-          <div class="input-group"><label>Port</label><input type="number" id="port" value="25565"></div>
-          <div class="input-group"><label>Bot Username</label><input type="text" id="name" placeholder="MyBot" value="MyBot"></div>
+          <div class="input-group"><label>Server IP</label><input type="text" id="ip" placeholder="localhost"></div>
+          <div class="input-group"><label>Port</label><input type="number" id="port" placeholder="25565"></div>
+          <div class="input-group"><label>Bot Username</label><input type="text" id="name" placeholder="MyBot"></div>
           <div class="input-group"><label>Version (blank = auto)</label><input type="text" id="ver" placeholder="e.g. 1.20.4"></div>
         </div>
         <div style="display:flex;gap:1rem;margin-top:1rem;">
@@ -201,7 +202,35 @@ input:checked+.slider:before{transform:translateX(26px);}
 const token = localStorage.getItem('token');
 let socket;
 
-if(token) initDash();
+// Load saved connection settings
+function loadSettings() {
+  const saved = JSON.parse(localStorage.getItem('botSettings') || '{}');
+  if (saved.ip) document.getElementById('ip').value = saved.ip;
+  if (saved.port) document.getElementById('port').value = saved.port;
+  if (saved.username) document.getElementById('name').value = saved.username;
+  if (saved.version) document.getElementById('ver').value = saved.version;
+  if (saved.offline !== undefined) document.getElementById('offline').checked = saved.offline;
+}
+function saveSettings() {
+  const settings = {
+    ip: document.getElementById('ip').value,
+    port: document.getElementById('port').value,
+    username: document.getElementById('name').value,
+    version: document.getElementById('ver').value,
+    offline: document.getElementById('offline').checked
+  };
+  localStorage.setItem('botSettings', JSON.stringify(settings));
+}
+
+// Save settings whenever they change
+['ip','port','name','ver','offline'].forEach(id => {
+  document.getElementById(id).addEventListener('change', saveSettings);
+  document.getElementById(id).addEventListener('keyup', saveSettings);
+});
+
+if(token) { initDash(); loadSettings(); }
+else { loadSettings(); }  // still load fields even before login (optional)
+
 document.getElementById('loginBtn').onclick = async () => {
   const pwd = document.getElementById('pwd').value;
   const res = await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:pwd})});
@@ -213,9 +242,15 @@ document.getElementById('loginBtn').onclick = async () => {
 function initDash(){
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('dashboard').style.display='block';
+  loadSettings();
   connectWS();
   setupTabs();
   document.getElementById('connectBtn').onclick = () => {
+    if (botConnected) return;
+    // Show connecting state
+    const btn = document.getElementById('connectBtn');
+    btn.textContent = 'Connecting...';
+    btn.disabled = true;
     socket.emit('connectBot',{
       host: document.getElementById('ip').value,
       port: parseInt(document.getElementById('port').value)||25565,
@@ -223,6 +258,7 @@ function initDash(){
       version: document.getElementById('ver').value,
       offline: document.getElementById('offline').checked
     });
+    // We'll revert on failure via botStatus event
   };
   document.getElementById('disconnectBtn').onclick = () => socket.emit('disconnectBot');
   document.getElementById('afkToggle').onchange = (e) => socket.emit('toggleAntiAfk', e.target.checked);
@@ -244,13 +280,32 @@ function initDash(){
   };
 }
 
+let botConnected = false;
+
 function connectWS(){
   socket = io({auth:{token}});
   socket.on('botStatus',(s)=>{
-    document.getElementById('connectBtn').disabled = s.connected;
-    document.getElementById('disconnectBtn').disabled = !s.connected;
-    ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = s.connected);
-    if(!s.connected){
+    botConnected = s.connected;
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+
+    if (s.connecting) {
+      // Still attempting
+      connectBtn.textContent = 'Connecting...';
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = true;
+      ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = true);
+    } else if (s.connected) {
+      connectBtn.textContent = 'Connected';
+      connectBtn.disabled = true;
+      disconnectBtn.disabled = false;
+      ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = true);
+    } else {
+      // Disconnected / failed
+      connectBtn.textContent = 'Connect';
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = false);
       ['uptime','health','hunger','pos','ping','inv'].forEach(id=>document.getElementById(id).textContent='--');
     }
     if(!s.connected && !s.connecting) beep();
@@ -391,6 +446,7 @@ io.on('connection', (socket) => {
 function startBot(opts) {
   botOpts = opts;
   manualStop = false;
+  io.emit('botStatus', { connected: false, connecting: true }); // show connecting
   try {
     bot = mineflayer.createBot({
       host: opts.host,
@@ -401,9 +457,9 @@ function startBot(opts) {
     });
     bindBotEvents(bot);
     addLog('Connecting to server...', 'system');
-    io.emit('botStatus', { connected: false, connecting: true });
   } catch (e) {
     addLog('Connection error: ' + e.message, 'error');
+    io.emit('botStatus', { connected: false, connecting: false }); // revert
   }
 }
 
@@ -413,7 +469,7 @@ function stopBot() {
   stopAfk();
   bot.quit();
   bot = null;
-  io.emit('botStatus', { connected: false });
+  io.emit('botStatus', { connected: false, connecting: false });
   addLog('Bot manually disconnected', 'system');
 }
 
@@ -421,7 +477,7 @@ function bindBotEvents(bot) {
   bot.on('login', () => {
     startTime = Date.now();
     addLog(`Connected as ${bot.username}`, 'system');
-    io.emit('botStatus', { connected: true });
+    io.emit('botStatus', { connected: true, connecting: false });
     if (afkEnabled) startAfk();
   });
 
@@ -451,7 +507,7 @@ function bindBotEvents(bot) {
   });
 
   function handleEnd() {
-    io.emit('botStatus', { connected: false });
+    io.emit('botStatus', { connected: false, connecting: false });
     stopAfk();
     bot = null;
     if (!manualStop) {
