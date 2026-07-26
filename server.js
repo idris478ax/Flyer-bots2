@@ -11,7 +11,7 @@ const DEFAULTS = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: 'dreamz',
-  version: '1.20.4',
+  version: false,        // AUTO-DETECT
   offline: true
 };
 
@@ -19,7 +19,7 @@ const DEFAULTS = {
 const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
 const DASHBOARD_PASSWORD = 'nounou123_';
 const RECONNECT_DELAY = 10000;            // 10 seconds between auto-retries
-const CONNECTION_TIMEOUT = 20000;         // 20 seconds
+const CONNECTION_TIMEOUT = 40000;         // 40 seconds (increased)
 const MAX_CONSOLE_LINES = 200;
 
 const AFK_MOVE_INTERVAL_MIN = 30;
@@ -90,7 +90,6 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  // Send current bot state
   const botStatus = bot ? (bot.entity ? 'online' : 'connecting') : 'offline';
   socket.emit('botStatus', {
     connected: bot ? true : false,
@@ -105,14 +104,12 @@ io.on('connection', (socket) => {
   socket.emit('antiAfkStatus', afkEnabled);
   socket.emit('customCommands', customCmds);
 
-  // Immediately send current server status (uses last stored opts or defaults)
   if (botOpts) {
     fetchServerStatus(botOpts.host, botOpts.port).then(info => socket.emit('serverStatus', info));
   } else {
     fetchServerStatus(DEFAULTS.host, DEFAULTS.port).then(info => socket.emit('serverStatus', info));
   }
 
-  // Client requests
   socket.on('connectBot', (opts) => {
     if (bot) {
       socket.emit('errorMsg', 'Bot already connected.');
@@ -174,7 +171,7 @@ function startBot(opts) {
       host: opts.host,
       port: opts.port,
       username: opts.username,
-      version: opts.version || false,
+      version: opts.version || false,   // false = auto
       auth: opts.offline ? 'offline' : 'microsoft'
     });
   } catch (e) {
@@ -219,10 +216,7 @@ function stopBot(manual = false) {
   bot = null;
   io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
   addLog('Bot disconnected', 'system');
-  if (manual) {
-    // user manually disconnected – don't auto-retry
-    manualStop = false; // reset for future
-  }
+  if (manual) manualStop = false;
 }
 
 function bindBotEvents(bot) {
@@ -234,7 +228,7 @@ function bindBotEvents(bot) {
     io.emit('botStatus', { connected: true, connecting: false, state: 'online' });
     io.emit('serverInfo', getServerInfo());
     if (afkEnabled) startAfk();
-    broadcastServerStatus(); // update server status now that we're inside
+    broadcastServerStatus();
   });
 
   bot.on('spawn', () => addLog('Spawned in the world', 'system'));
@@ -282,14 +276,14 @@ function bindBotEvents(bot) {
   }
 }
 
-// Telemetry + server info broadcast
+// Telemetry + server info broadcast every 3 seconds
 setInterval(() => {
   if (bot && bot.entity) {
     io.emit('telemetry', getTelemetry());
     io.emit('serverInfo', getServerInfo());
   }
   if (botOpts) broadcastServerStatus();
-}, 3000); // every 3 seconds
+}, 3000);
 
 function getTelemetry() {
   if (!bot || !bot.entity) return null;
