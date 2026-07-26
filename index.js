@@ -4,7 +4,6 @@ const socketIo = require('socket.io');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const mineflayer = require('mineflayer');
-const path = require('path');
 
 // ---------- CONFIG ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
@@ -23,8 +22,8 @@ const MOVE_DURATION_MS = 1200;      // ~5 blocks
 
 // ---------- GLOBALS ----------
 let bot = null;
-let botOpts = null;          // last connection options
-let manualStop = false;      // user clicked Disconnect
+let botOpts = null;
+let manualStop = false;
 let startTime = null;
 let afkEnabled = true;
 let afkTimers = { move: null, chat: null };
@@ -199,7 +198,6 @@ input:checked+.slider:before{transform:translateX(26px);}
 </div>
 <script src="/socket.io/socket.io.js"></script>
 <script>
-// ---------- CLIENT LOGIC ----------
 const token = localStorage.getItem('token');
 let socket;
 
@@ -217,7 +215,6 @@ function initDash(){
   document.getElementById('dashboard').style.display='block';
   connectWS();
   setupTabs();
-  // Connection form
   document.getElementById('connectBtn').onclick = () => {
     socket.emit('connectBot',{
       host: document.getElementById('ip').value,
@@ -322,7 +319,6 @@ function beep(){
     osc.start(); osc.stop(ctx.currentTime+0.2);
   }catch(e){}
 }
-// Tab switching
 function setupTabs(){
   const lis = document.querySelectorAll('.sidebar li');
   const tabs = document.querySelectorAll('.tab-content');
@@ -334,7 +330,6 @@ function setupTabs(){
     document.getElementById('sidebar').classList.remove('open');
   });
 }
-// Mobile menu
 document.getElementById('menuToggle').onclick = () => document.getElementById('sidebar').classList.toggle('open');
 </script>
 </body>
@@ -352,7 +347,6 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
-  // Send current state
   socket.emit('botStatus', { connected: !!bot, connecting: false });
   if (bot && bot.entity) socket.emit('telemetry', getTelemetry());
   socket.emit('consoleInit', consoleLog);
@@ -382,7 +376,7 @@ io.on('connection', (socket) => {
   socket.on('sendMessage', (msg) => {
     if (bot) {
       bot.chat(msg);
-      addLog(\`<\${bot.username}> \${msg}\`, 'bot-message');
+      addLog(`<${bot.username}> ${msg}`, 'bot-message');
     }
   });
 
@@ -426,7 +420,7 @@ function stopBot() {
 function bindBotEvents(bot) {
   bot.on('login', () => {
     startTime = Date.now();
-    addLog(\`Connected as \${bot.username}\`, 'system');
+    addLog(`Connected as ${bot.username}`, 'system');
     io.emit('botStatus', { connected: true });
     if (afkEnabled) startAfk();
   });
@@ -435,12 +429,11 @@ function bindBotEvents(bot) {
 
   bot.on('chat', (username, message) => {
     const style = username === bot.username ? 'bot-message' : 'chat';
-    addLog(\`<\${username}> \${message}\`, style);
-    // Process custom commands
+    addLog(`<${username}> ${message}`, style);
     for (const cmd of customCmds) {
       if (message.trim().toLowerCase() === cmd.name.toLowerCase()) {
         bot.chat(cmd.response);
-        addLog(\`[Cmd] Responded to \${username}: \${cmd.response}\`, 'system');
+        addLog(`[Cmd] Responded to ${username}: ${cmd.response}`, 'system');
       }
     }
   });
@@ -462,7 +455,7 @@ function bindBotEvents(bot) {
     stopAfk();
     bot = null;
     if (!manualStop) {
-      addLog(\`Reconnecting in \${RECONNECT_DELAY / 1000}s...\`, 'system');
+      addLog(`Reconnecting in ${RECONNECT_DELAY / 1000}s...`, 'system');
       setTimeout(() => {
         if (!manualStop && botOpts) startBot(botOpts);
       }, RECONNECT_DELAY);
@@ -493,7 +486,6 @@ function getTelemetry() {
 function startAfk() {
   if (!bot || !afkEnabled) return;
   stopAfk();
-  // Random movement
   afkTimers.move = setInterval(() => {
     if (!bot || !afkEnabled || !bot.entity) return;
     const yaw = Math.random() * Math.PI * 2;
@@ -505,14 +497,13 @@ function startAfk() {
     }, MOVE_DURATION_MS);
   }, (Math.floor(Math.random() * (AFK_MOVE_INTERVAL_MAX - AFK_MOVE_INTERVAL_MIN + 1)) + AFK_MOVE_INTERVAL_MIN) * 1000);
 
-  // Random chat
   const chatMs = (Math.floor(Math.random() * (AFK_CHAT_INTERVAL_MAX - AFK_CHAT_INTERVAL_MIN + 1)) + AFK_CHAT_INTERVAL_MIN) * 60000;
   afkTimers.chat = setInterval(() => {
     if (!bot || !afkEnabled) return;
     const msgs = ['Hello!', 'How is everyone?', 'Nice day!', 'Anyone here?', 'Just mining...'];
     const msg = msgs[Math.floor(Math.random() * msgs.length)];
     bot.chat(msg);
-    addLog(\`[AntiAFK] Sent: \${msg}\`, 'anti-afk');
+    addLog(`[AntiAFK] Sent: ${msg}`, 'anti-afk');
   }, chatMs);
 }
 
@@ -531,4 +522,6 @@ function addLog(text, style = 'default') {
 
 // ---------- START SERVER ----------
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(\`Dashboard live on port \${PORT}\`));
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Dashboard running on port ${PORT}`);
+});
