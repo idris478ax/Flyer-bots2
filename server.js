@@ -10,7 +10,7 @@ const { status } = require('minecraft-server-util');
 const DEFAULTS = {
   host: 'Power69.aternos.me',
   port: 42959,
-  username: 'abdou-admin',
+  username: 'dreamz',
   version: false,        // AUTO-DETECT – never fails because of version
   offline: true
 };
