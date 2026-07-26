@@ -2,21 +2,19 @@ const token = localStorage.getItem('token');
 let socket;
 let botConnected = false;
 
-// Load settings from localStorage or defaults
 function loadSettings() {
   const saved = JSON.parse(localStorage.getItem('botSettings'));
   if (saved) {
     document.getElementById('ip').value = saved.ip || 'Power69.aternos.me';
     document.getElementById('port').value = saved.port || 42959;
     document.getElementById('name').value = saved.username || 'dreamz';
-    document.getElementById('ver').value = saved.version || '1.20.4';
+    document.getElementById('ver').value = saved.version || '';
     document.getElementById('offline').checked = saved.offline !== false;
   } else {
-    // Defaults
     document.getElementById('ip').value = 'Power69.aternos.me';
     document.getElementById('port').value = 42959;
     document.getElementById('name').value = 'dreamz';
-    document.getElementById('ver').value = '1.20.4';
+    document.getElementById('ver').value = '';
     document.getElementById('offline').checked = true;
   }
 }
@@ -37,7 +35,7 @@ if (token) {
   document.getElementById('dashboard').style.display = 'flex';
   initApp();
 } else {
-  loadSettings(); // still load fields on login screen
+  loadSettings();
 }
 
 document.getElementById('loginBtn').addEventListener('click', async () => {
@@ -91,7 +89,7 @@ function setupEventListeners() {
       host: document.getElementById('ip').value,
       port: parseInt(document.getElementById('port').value) || 42959,
       username: document.getElementById('name').value,
-      version: document.getElementById('ver').value,
+      version: document.getElementById('ver').value || false,
       offline: document.getElementById('offline').checked
     });
     saveSettings();
@@ -126,7 +124,6 @@ function setupEventListeners() {
     }
   });
 
-  // Save settings on change
   ['ip', 'port', 'name', 'ver', 'offline'].forEach(id => {
     document.getElementById(id).addEventListener('change', saveSettings);
     document.getElementById(id).addEventListener('keyup', saveSettings);
@@ -146,7 +143,7 @@ function connectSocket() {
       connectBtn.disabled = true;
       disconnectBtn.disabled = true;
       disableInputs(true);
-    } else if (status.connected && status.state === 'online') {
+    } else if (status.state === 'online') {
       connectBtn.textContent = 'Connected';
       connectBtn.disabled = true;
       disconnectBtn.disabled = false;
@@ -157,7 +154,12 @@ function connectSocket() {
       disconnectBtn.disabled = true;
       disableInputs(false);
       if (!status.connected) {
-        ['uptime', 'health', 'hunger', 'pos', 'ping', 'inv'].forEach(id => document.getElementById(id).textContent = '--');
+        document.getElementById('uptime').textContent = '00:00:00';
+        document.getElementById('health').textContent = '--';
+        document.getElementById('hunger').textContent = '--';
+        document.getElementById('pos').textContent = '--';
+        document.getElementById('ping').textContent = '--';
+        document.getElementById('inv').textContent = '--';
       }
     }
   });
