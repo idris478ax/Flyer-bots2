@@ -1,16 +1,16 @@
 {
-  "name": "abdou-bot",
+  "name": "minebot-dashboard",
   "version": "1.0.0",
-  "description": "ABDOU-BOT with auto-version and anti-AFK",
+  "description": "Minecraft bot with web dashboard",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
-  "engines": {
-    "node": "18.x"
-  },
   "dependencies": {
+    "cookie-parser": "^1.4.6",
     "express": "^4.18.2",
-    "mineflayer": "^4.11.0"
+    "jsonwebtoken": "^9.0.2",
+    "mineflayer": "^4.20.0",
+    "socket.io": "^4.7.4"
   }
 }
