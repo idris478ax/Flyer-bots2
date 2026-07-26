@@ -6,23 +6,30 @@ const jwt = require('jsonwebtoken');
 const mineflayer = require('mineflayer');
 const { status } = require('minecraft-server-util');
 
-// ---------- HARDCODED DEFAULTS ----------
+// ---------- HARDCODED SERVER ----------
 const DEFAULTS = {
   host: 'Power69.aternos.me',
   port: 42959,
   username: 'dreamz',
-  version: false,
-  offline: true
+  version: false,          // auto-detect
+  offline: true            // always offline mode
 };
 
 // ---------- CONFIG ----------
 const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
 const DASHBOARD_PASSWORD = 'nounou123_';
-const RETRY_DELAY = 10000;
-const CONNECTION_TIMEOUT = 40000;
+const RETRY_DELAY = 10000;            // 10 seconds
+const CONNECTION_TIMEOUT = 40000;     // 40 seconds
 const MAX_CONSOLE_LINES = 200;
 
-// Default Anti‑AFK settings
+// ---------- GLOBAL STATE ----------
+let bot = null;
+let botOpts = null;
+let manualStop = false;
+let autoReconnect = true;             // always ON by default
+let startTime = null;
+
+// Anti‑AFK settings (editable from dashboard)
 let afkSettings = {
   enabled: true,
   moveMinSec: 30,
@@ -33,24 +40,16 @@ let afkSettings = {
   chatMessages: ['Hello!', 'How is everyone?', 'Nice day!', 'Anyone here?', 'Just mining...']
 };
 
-// Walking speed in m/s
-const WALK_SPEED = 4.317;
-
-function computeMoveDuration(blocks) {
-  return (blocks / WALK_SPEED) * 1000; // ms
-}
-
-// ---------- GLOBALS ----------
-let bot = null;
-let botOpts = null;
-let manualStop = false;
-let startTime = null;
+let afkTimers = { move: null, chat: null };
 let customCmds = [];
 let consoleLog = [];
 let connectionTimeout = null;
 let retryTimer = null;
-let afkTimers = { move: null, chat: null };
-const playerJoinTimes = new Map(); // username -> Date.now()
+const playerJoinTimes = new Map();
+
+// Walking speed
+const WALK_SPEED = 4.317;
+function moveDuration(blocks) { return (blocks / WALK_SPEED) * 1000; }
 
 // ---------- EXPRESS + SOCKET.IO ----------
 const app = express();
@@ -60,6 +59,7 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.static('public'));
 
+// Auth
 app.post('/api/login', (req, res) => {
   if (req.body.password === DASHBOARD_PASSWORD) {
     const token = jwt.sign({ auth: true }, JWT_SECRET, { expiresIn: '24h' });
@@ -83,13 +83,12 @@ async function fetchServerStatus(host, port) {
     return { online: false };
   }
 }
-
 function broadcastServerStatus() {
   if (!botOpts) return;
   fetchServerStatus(botOpts.host, botOpts.port).then(info => io.emit('serverStatus', info));
 }
 
-// ---------- SOCKET.IO ----------
+// Socket.IO auth
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) return next(new Error('No token'));
@@ -100,8 +99,10 @@ io.use((socket, next) => {
 });
 
 io.on('connection', (socket) => {
+  // Send current state
   const state = bot ? (bot.entity ? 'online' : 'connecting') : 'offline';
   socket.emit('botStatus', { connected: !!bot, connecting: bot && !bot.entity, state });
+  socket.emit('autoReconnect', autoReconnect);
   if (bot && bot.entity) {
     socket.emit('telemetry', getTelemetry());
     socket.emit('serverInfo', getServerInfo());
@@ -115,13 +116,22 @@ io.on('connection', (socket) => {
   const port = botOpts ? botOpts.port : DEFAULTS.port;
   fetchServerStatus(host, port).then(info => socket.emit('serverStatus', info));
 
+  // ---------- CLIENT EVENTS ----------
   socket.on('connectBot', (opts) => {
     if (bot) { socket.emit('errorMsg', 'Bot already connected.'); return; }
     stopRetry();
-    startBot(opts);
+    startBot({ ...opts, offline: true }); // always offline
   });
 
   socket.on('disconnectBot', () => stopBot(true));
+
+  socket.on('setAutoReconnect', (value) => {
+    autoReconnect = value;
+    io.emit('autoReconnect', autoReconnect);
+    addLog(`Auto‑reconnect ${autoReconnect ? 'enabled' : 'disabled'}`, 'system');
+    // If disabled and currently retrying, cancel retry
+    if (!autoReconnect) stopRetry();
+  });
 
   socket.on('updateAfkSettings', (newSettings) => {
     afkSettings = { ...afkSettings, ...newSettings };
@@ -147,7 +157,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ---------- BOT ----------
+// ---------- BOT MANAGEMENT ----------
 function startBot(opts) {
   botOpts = opts;
   manualStop = false;
@@ -161,7 +171,7 @@ function startBot(opts) {
       port: opts.port,
       username: opts.username,
       version: opts.version || false,
-      auth: opts.offline ? 'offline' : 'microsoft'
+      auth: 'offline'   // forced offline
     });
   } catch (e) {
     addLog('Connection error: ' + e.message, 'error');
@@ -187,11 +197,11 @@ function startBot(opts) {
 }
 
 function scheduleRetry() {
-  if (manualStop) return;
+  if (manualStop || !autoReconnect) return;
   stopRetry();
   addLog(`Retrying in ${RETRY_DELAY / 1000}s...`, 'system');
   retryTimer = setTimeout(() => {
-    if (!manualStop && botOpts) startBot(botOpts);
+    if (!manualStop && autoReconnect && botOpts) startBot(botOpts);
   }, RETRY_DELAY);
 }
 
@@ -249,12 +259,12 @@ function bindBotEvents(bot) {
     io.emit('botStatus', { connected: false, connecting: false, state: 'offline' });
     stopAfk();
     bot = null;
-    if (!manualStop) scheduleRetry();
+    if (!manualStop && autoReconnect) scheduleRetry();
     else manualStop = false;
   }
 }
 
-// ---------- DATA EMIT ----------
+// ---------- DATA STREAMS (1 second interval) ----------
 setInterval(() => {
   if (bot && bot.entity) {
     io.emit('telemetry', getTelemetry());
@@ -262,7 +272,7 @@ setInterval(() => {
     io.emit('playerList', getPlayerList());
   }
   if (botOpts) broadcastServerStatus();
-}, 1000); // 1‑second updates
+}, 1000);
 
 function getTelemetry() {
   if (!bot || !bot.entity) return null;
@@ -308,28 +318,28 @@ function getPlayerList() {
       onlineTime
     });
   }
-  // Clean up stored times for players who left
+  // Clean up old entries
   for (const name of playerJoinTimes.keys()) {
     if (!bot.players[name]) playerJoinTimes.delete(name);
   }
   return list;
 }
 
-// ---------- ANTI-AFK ----------
+// ---------- ANTI‑AFK ----------
 function startAfk() {
   if (!bot || !afkSettings.enabled) return;
   stopAfk();
 
-  const moveDur = computeMoveDuration(afkSettings.moveDistanceBlocks);
-  const moveInterval = Math.floor(Math.random() * (afkSettings.moveMaxSec - afkSettings.moveMinSec + 1)) + afkSettings.moveMinSec;
+  const dur = moveDuration(afkSettings.moveDistanceBlocks);
+  const interval = Math.floor(Math.random() * (afkSettings.moveMaxSec - afkSettings.moveMinSec + 1)) + afkSettings.moveMinSec;
   afkTimers.move = setInterval(() => {
     if (!bot || !afkSettings.enabled || !bot.entity) return;
     const yaw = Math.random() * Math.PI * 2;
     bot.look(yaw, 0, true);
     bot.setControlState('forward', true);
     addLog('[AntiAFK] Moving', 'anti-afk');
-    setTimeout(() => { if (bot) bot.setControlState('forward', false); }, moveDur);
-  }, moveInterval * 1000);
+    setTimeout(() => { if (bot) bot.setControlState('forward', false); }, dur);
+  }, interval * 1000);
 
   const chatMs = (Math.floor(Math.random() * (afkSettings.chatMaxMin - afkSettings.chatMinMin + 1)) + afkSettings.chatMinMin) * 60000;
   afkTimers.chat = setInterval(() => {
@@ -356,14 +366,19 @@ function addLog(text, style = 'default') {
   io.emit('console', entry);
 }
 
-function stopRetry() { if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; } }
-function clearConnectionTimeout() { if (connectionTimeout) { clearTimeout(connectionTimeout); connectionTimeout = null; } }
+function stopRetry() {
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+}
+function clearConnectionTimeout() {
+  if (connectionTimeout) { clearTimeout(connectionTimeout); connectionTimeout = null; }
+}
 
 function initialConnect() {
   botOpts = { ...DEFAULTS };
   startBot(botOpts);
 }
 
+// ---------- START ----------
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Dashboard running on port ${PORT}`);
