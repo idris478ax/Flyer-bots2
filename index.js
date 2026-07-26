@@ -10,15 +10,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'change_me_!';
 const DASHBOARD_PASSWORD = 'nounou123_';
 const RECONNECT_DELAY = 5000;
 const MAX_CONSOLE_LINES = 200;
+const CONNECTION_TIMEOUT = 20000; // 20 seconds
 
-// Anti‑AFK timing
-const AFK_MOVE_INTERVAL_MIN = 30;   // seconds
+const AFK_MOVE_INTERVAL_MIN = 30;
 const AFK_MOVE_INTERVAL_MAX = 40;
-const AFK_CHAT_INTERVAL_MIN = 10;   // minutes
+const AFK_CHAT_INTERVAL_MIN = 10;
 const AFK_CHAT_INTERVAL_MAX = 13;
-
-// Movement
-const MOVE_DURATION_MS = 1200;      // ~5 blocks
+const MOVE_DURATION_MS = 1200;
 
 // ---------- GLOBALS ----------
 let bot = null;
@@ -29,6 +27,7 @@ let afkEnabled = true;
 let afkTimers = { move: null, chat: null };
 let customCmds = [];
 let consoleLog = [];
+let connectionTimeout = null;
 
 // ---------- EXPRESS + SOCKET.IO ----------
 const app = express();
@@ -37,7 +36,6 @@ const io = socketIo(server);
 app.use(cookieParser());
 app.use(express.json());
 
-// ---------- AUTH ----------
 app.post('/api/login', (req, res) => {
   if (req.body.password === DASHBOARD_PASSWORD) {
     const token = jwt.sign({ auth: true }, JWT_SECRET, { expiresIn: '24h' });
@@ -46,7 +44,6 @@ app.post('/api/login', (req, res) => {
   res.status(401).json({ error: 'Wrong password' });
 });
 
-// ---------- SERVE DASHBOARD (all HTML/CSS/JS inline) ----------
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -155,7 +152,7 @@ input:checked+.slider:before{transform:translateX(26px);}
     </div>
     <div class="tab-content" id="tab-telemetry">
       <div class="card">
-        <h3>Live Telemetry</h3>
+        <h3>Bot Telemetry</h3>
         <div class="grid" id="telem">
           <div class="stat"><label>Uptime</label><span id="uptime">00:00:00</span></div>
           <div class="stat"><label>Health</label><span id="health">--</span></div>
@@ -167,6 +164,14 @@ input:checked+.slider:before{transform:translateX(26px);}
         <div class="toggle-container">
           <span>Anti-AFK</span>
           <label class="toggle"><input type="checkbox" id="afkToggle" checked><span class="slider"></span></label>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Server Info</h3>
+        <div class="grid" id="serverInfo">
+          <div class="stat"><label>Online Players</label><span id="onlinePlayers">--</span></div>
+          <div class="stat"><label>Server Brand</label><span id="serverBrand">--</span></div>
+          <div class="stat"><label>Version</label><span id="serverVersion">--</span></div>
         </div>
       </div>
       <div class="card">
@@ -202,7 +207,6 @@ input:checked+.slider:before{transform:translateX(26px);}
 const token = localStorage.getItem('token');
 let socket;
 
-// Load saved connection settings
 function loadSettings() {
   const saved = JSON.parse(localStorage.getItem('botSettings') || '{}');
   if (saved.ip) document.getElementById('ip').value = saved.ip;
@@ -222,14 +226,13 @@ function saveSettings() {
   localStorage.setItem('botSettings', JSON.stringify(settings));
 }
 
-// Save settings whenever they change
 ['ip','port','name','ver','offline'].forEach(id => {
   document.getElementById(id).addEventListener('change', saveSettings);
   document.getElementById(id).addEventListener('keyup', saveSettings);
 });
 
 if(token) { initDash(); loadSettings(); }
-else { loadSettings(); }  // still load fields even before login (optional)
+else { loadSettings(); }
 
 document.getElementById('loginBtn').onclick = async () => {
   const pwd = document.getElementById('pwd').value;
@@ -247,7 +250,6 @@ function initDash(){
   setupTabs();
   document.getElementById('connectBtn').onclick = () => {
     if (botConnected) return;
-    // Show connecting state
     const btn = document.getElementById('connectBtn');
     btn.textContent = 'Connecting...';
     btn.disabled = true;
@@ -258,7 +260,6 @@ function initDash(){
       version: document.getElementById('ver').value,
       offline: document.getElementById('offline').checked
     });
-    // We'll revert on failure via botStatus event
   };
   document.getElementById('disconnectBtn').onclick = () => socket.emit('disconnectBot');
   document.getElementById('afkToggle').onchange = (e) => socket.emit('toggleAntiAfk', e.target.checked);
@@ -290,7 +291,6 @@ function connectWS(){
     const disconnectBtn = document.getElementById('disconnectBtn');
 
     if (s.connecting) {
-      // Still attempting
       connectBtn.textContent = 'Connecting...';
       connectBtn.disabled = true;
       disconnectBtn.disabled = true;
@@ -301,12 +301,11 @@ function connectWS(){
       disconnectBtn.disabled = false;
       ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = true);
     } else {
-      // Disconnected / failed
       connectBtn.textContent = 'Connect';
       connectBtn.disabled = false;
       disconnectBtn.disabled = true;
       ['ip','port','name','ver','offline'].forEach(id=>document.getElementById(id).disabled = false);
-      ['uptime','health','hunger','pos','ping','inv'].forEach(id=>document.getElementById(id).textContent='--');
+      ['uptime','health','hunger','pos','ping','inv','onlinePlayers','serverBrand','serverVersion'].forEach(id=>document.getElementById(id).textContent='--');
     }
     if(!s.connected && !s.connecting) beep();
   });
@@ -320,6 +319,12 @@ function connectWS(){
     document.getElementById('pos').textContent = Math.floor(t.position.x)+', '+Math.floor(t.position.y)+', '+Math.floor(t.position.z);
     document.getElementById('ping').textContent = t.ping+'ms';
     document.getElementById('inv').textContent = t.inventoryCount;
+  });
+  socket.on('serverInfo',(info)=>{
+    if(!info) return;
+    document.getElementById('onlinePlayers').textContent = info.onlinePlayers || '--';
+    document.getElementById('serverBrand').textContent = info.brand || '--';
+    document.getElementById('serverVersion').textContent = info.version || '--';
   });
   socket.on('antiAfkStatus',(v)=>{ document.getElementById('afkToggle').checked = v; });
   socket.on('customCommands',(cmds)=>{ renderCmdTable(cmds); });
@@ -403,7 +408,10 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   socket.emit('botStatus', { connected: !!bot, connecting: false });
-  if (bot && bot.entity) socket.emit('telemetry', getTelemetry());
+  if (bot && bot.entity) {
+    socket.emit('telemetry', getTelemetry());
+    socket.emit('serverInfo', getServerInfo());
+  }
   socket.emit('consoleInit', consoleLog);
   socket.emit('antiAfkStatus', afkEnabled);
   socket.emit('customCommands', customCmds);
@@ -443,10 +451,19 @@ io.on('connection', (socket) => {
 });
 
 // ---------- BOT FUNCTIONS ----------
+function clearConnectionTimeout() {
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
+  }
+}
+
 function startBot(opts) {
   botOpts = opts;
   manualStop = false;
-  io.emit('botStatus', { connected: false, connecting: true }); // show connecting
+  startTime = null;
+  io.emit('botStatus', { connected: false, connecting: true });
+
   try {
     bot = mineflayer.createBot({
       host: opts.host,
@@ -455,18 +472,33 @@ function startBot(opts) {
       version: opts.version || false,
       auth: opts.offline ? 'offline' : 'microsoft'
     });
-    bindBotEvents(bot);
-    addLog('Connecting to server...', 'system');
   } catch (e) {
     addLog('Connection error: ' + e.message, 'error');
-    io.emit('botStatus', { connected: false, connecting: false }); // revert
+    io.emit('botStatus', { connected: false, connecting: false });
+    return;
   }
+
+  bindBotEvents(bot);
+  addLog('Connecting to server...', 'system');
+
+  // Connection timeout
+  clearConnectionTimeout();
+  connectionTimeout = setTimeout(() => {
+    if (bot && !bot.entity) {
+      addLog('Connection timed out – server unreachable or wrong details', 'error');
+      bot.quit();
+      bot = null;
+      io.emit('botStatus', { connected: false, connecting: false });
+    }
+    connectionTimeout = null;
+  }, CONNECTION_TIMEOUT);
 }
 
 function stopBot() {
   if (!bot) return;
   manualStop = true;
   stopAfk();
+  clearConnectionTimeout();
   bot.quit();
   bot = null;
   io.emit('botStatus', { connected: false, connecting: false });
@@ -475,9 +507,11 @@ function stopBot() {
 
 function bindBotEvents(bot) {
   bot.on('login', () => {
+    clearConnectionTimeout();
     startTime = Date.now();
     addLog(`Connected as ${bot.username}`, 'system');
     io.emit('botStatus', { connected: true, connecting: false });
+    io.emit('serverInfo', getServerInfo());
     if (afkEnabled) startAfk();
   });
 
@@ -499,7 +533,14 @@ function bindBotEvents(bot) {
     handleEnd();
   });
 
-  bot.on('error', (err) => addLog('Error: ' + err.message, 'error'));
+  bot.on('error', (err) => {
+    addLog('Error: ' + err.message, 'error');
+    // If error occurs before login, stop connecting state
+    if (!startTime) {
+      clearConnectionTimeout();
+      io.emit('botStatus', { connected: false, connecting: false });
+    }
+  });
 
   bot.on('end', (reason) => {
     addLog('Disconnected: ' + reason, 'error');
@@ -507,6 +548,7 @@ function bindBotEvents(bot) {
   });
 
   function handleEnd() {
+    clearConnectionTimeout();
     io.emit('botStatus', { connected: false, connecting: false });
     stopAfk();
     bot = null;
@@ -521,9 +563,12 @@ function bindBotEvents(bot) {
   }
 }
 
-// Telemetry interval
+// Telemetry + server info broadcast every second
 setInterval(() => {
-  if (bot && bot.entity) io.emit('telemetry', getTelemetry());
+  if (bot && bot.entity) {
+    io.emit('telemetry', getTelemetry());
+    io.emit('serverInfo', getServerInfo());
+  }
 }, 1000);
 
 function getTelemetry() {
@@ -535,6 +580,15 @@ function getTelemetry() {
     position: bot.entity.position,
     ping: bot.player ? bot.player.ping : 0,
     inventoryCount: bot.inventory.items().length
+  };
+}
+
+function getServerInfo() {
+  if (!bot) return null;
+  return {
+    onlinePlayers: bot.players ? Object.keys(bot.players).join(', ') || 'None' : '--',
+    brand: bot.game ? bot.game.serverBrand || 'Unknown' : 'Unknown',
+    version: bot.version || 'Unknown'
   };
 }
 
